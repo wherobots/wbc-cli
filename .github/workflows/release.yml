@@ -1,66 +1,66 @@
 name: Release
 
 on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
+    push:
+        branches:
+            - main
+    workflow_dispatch:
 
 concurrency:
-  group: latest-prerelease
-  cancel-in-progress: true
+    group: latest-prerelease
+    cancel-in-progress: true
 
 permissions:
-  contents: write
+    contents: write
 
 jobs:
-  prerelease:
-    name: Publish latest prerelease
-    runs-on: depot-ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+    prerelease:
+        name: Publish latest prerelease
+        runs-on: depot-ubuntu-24.04-arm-4
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
+            - name: Setup Go
+              uses: actions/setup-go@v5
+              with:
+                  go-version-file: go.mod
+                  cache: true
 
-      - name: Run tests
-        run: go test ./...
+            - name: Run tests
+              run: go test ./...
 
-      - name: Build release binaries
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          for GOOS in darwin linux windows; do
-            for GOARCH in amd64 arm64; do
-              OUT="dist/wherobots_${GOOS}_${GOARCH}"
-              if [ "${GOOS}" = "windows" ]; then
-                OUT="${OUT}.exe"
-              fi
-              echo "Building ${OUT}"
-              GOOS="${GOOS}" GOARCH="${GOARCH}" CGO_ENABLED=0 \
-                go build -ldflags "-s -w -X main.version=latest-prerelease -X main.commit=${GITHUB_SHA} -X main.date=${BUILD_DATE}" -o "${OUT}" .
-            done
-          done
-          (cd dist && sha256sum * > checksums.txt)
+            - name: Build release binaries
+              run: |
+                  set -euo pipefail
+                  mkdir -p dist
+                  BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                  for GOOS in darwin linux windows; do
+                    for GOARCH in amd64 arm64; do
+                      OUT="dist/wherobots_${GOOS}_${GOARCH}"
+                      if [ "${GOOS}" = "windows" ]; then
+                        OUT="${OUT}.exe"
+                      fi
+                      echo "Building ${OUT}"
+                      GOOS="${GOOS}" GOARCH="${GOARCH}" CGO_ENABLED=0 \
+                        go build -ldflags "-s -w -X main.version=latest-prerelease -X main.commit=${GITHUB_SHA} -X main.date=${BUILD_DATE}" -o "${OUT}" .
+                    done
+                  done
+                  (cd dist && sha256sum * > checksums.txt)
 
-      - name: Publish rolling prerelease
-        run: |
-          set -euo pipefail
-          TAG="latest-prerelease"
-          if gh release view "${TAG}" >/dev/null 2>&1; then
-            gh release delete "${TAG}" --yes --cleanup-tag
-          fi
-          gh release create "${TAG}" dist/* \
-            --target "${GITHUB_SHA}" \
-            --title "Latest prerelease" \
-            --notes "Automated prerelease from main for commit ${GITHUB_SHA}." \
-            --prerelease
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            - name: Publish rolling prerelease
+              run: |
+                  set -euo pipefail
+                  TAG="latest-prerelease"
+                  if gh release view "${TAG}" >/dev/null 2>&1; then
+                    gh release delete "${TAG}" --yes --cleanup-tag
+                  fi
+                  gh release create "${TAG}" dist/* \
+                    --target "${GITHUB_SHA}" \
+                    --title "Latest prerelease" \
+                    --notes "Automated prerelease from main for commit ${GITHUB_SHA}." \
+                    --prerelease
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
