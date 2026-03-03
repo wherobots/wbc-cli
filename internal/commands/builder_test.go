@@ -48,7 +48,9 @@ func TestDryRunOutputsCurl(t *testing.T) {
 			{
 				Method:         "GET",
 				Path:           "/users/{id}",
+				PathParams:     []spec.Parameter{{Name: "id", Location: "path", Required: true, Type: "string"}},
 				PathParamOrder: []string{"id"},
+				QueryParams:    []spec.Parameter{{Name: "expand", Location: "query", Required: false, Type: "boolean"}},
 			},
 		},
 	}
@@ -57,7 +59,7 @@ func TestDryRunOutputsCurl(t *testing.T) {
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
-	root.SetArgs([]string{"users", "get", "42", "--dry-run", "-q", "expand=true"})
+	root.SetArgs([]string{"users", "get", "--id", "42", "--expand", "true", "--dry-run"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -79,11 +81,13 @@ func TestInvalidArgsReturnsUsageHint(t *testing.T) {
 			{
 				Method:         "GET",
 				Path:           "/users/{id}",
+				PathParams:     []spec.Parameter{{Name: "id", Location: "path", Required: true, Type: "string"}},
 				PathParamOrder: []string{"id"},
 				RequestBody: &spec.RequestBodyInfo{
-					Required: true,
-					RequiredFields: []spec.BodyField{
-						{Name: "name", Type: "string"},
+					Required:   true,
+					SchemaType: "object",
+					Fields: []spec.BodyField{
+						{Name: "name", Type: "string", Required: true},
 					},
 				},
 			},
@@ -103,7 +107,52 @@ func TestInvalidArgsReturnsUsageHint(t *testing.T) {
 	message := err.Error()
 	if !strings.Contains(message, "Did you mean to use the body:") ||
 		!strings.Contains(message, "Required Path Params: [id]") ||
-		!strings.Contains(message, "Required Body Params: [name]") {
+		!strings.Contains(message, "Required Body Params: [name]") ||
+		!strings.Contains(message, "Expected Types:") {
 		t.Fatalf("expected hint in error, got: %s", message)
+	}
+}
+
+func TestHelpShowsTypedFlagSamples(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{AppName: "wherobots", HTTPTimeout: time.Second}
+	runtimeSpec := &spec.RuntimeSpec{
+		BaseURL: "https://api.example.com",
+		Operations: []*spec.Operation{
+			{
+				Method:         "PATCH",
+				Path:           "/users/{id}",
+				PathParams:     []spec.Parameter{{Name: "id", Location: "path", Required: true, Type: "string"}},
+				PathParamOrder: []string{"id"},
+				QueryParams:    []spec.Parameter{{Name: "limit", Location: "query", Required: false, Type: "integer"}},
+				RequestBody: &spec.RequestBodyInfo{
+					Required:   true,
+					SchemaType: "object",
+					Fields: []spec.BodyField{
+						{Name: "enabled", Type: "boolean", Required: true},
+						{Name: "metadata", Type: "object", Required: false},
+					},
+				},
+			},
+		},
+	}
+
+	root := BuildRootCommand(cfg, runtimeSpec)
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"users", "update", "--help"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	help := out.String()
+	if !strings.Contains(help, "--limit string") ||
+		!strings.Contains(help, "sample: 0") ||
+		!strings.Contains(help, "--metadata-json string") ||
+		!strings.Contains(help, "--json '{\"enabled\":false}'") {
+		t.Fatalf("help missing expected typed guidance:\n%s", help)
 	}
 }

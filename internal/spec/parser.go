@@ -220,18 +220,22 @@ func extractRequestBodyInfo(op *highv3.Operation) *RequestBodyInfo {
 		return &RequestBodyInfo{
 			Required:    isRequestBodyRequired(op.RequestBody),
 			ContentType: contentType,
+			SchemaType:  "object",
 		}
 	}
 
-	var requiredFields []BodyField
+	schemaType := "object"
+	var fields []BodyField
 	if mediaType.Schema != nil {
-		requiredFields = extractRequiredFields(mediaType.Schema.Schema())
+		schemaType = resolveSchemaType(mediaType.Schema)
+		fields = extractBodyFields(mediaType.Schema.Schema())
 	}
 
 	return &RequestBodyInfo{
-		Required:       isRequestBodyRequired(op.RequestBody),
-		ContentType:    contentType,
-		RequiredFields: requiredFields,
+		Required:    isRequestBodyRequired(op.RequestBody),
+		ContentType: contentType,
+		SchemaType:  schemaType,
+		Fields:      fields,
 	}
 }
 
@@ -254,20 +258,35 @@ func pickPreferredMediaType(content *orderedmap.Map[string, *highv3.MediaType]) 
 	return firstKey, firstMedia
 }
 
-func extractRequiredFields(schema *highbase.Schema) []BodyField {
-	if schema == nil || len(schema.Required) == 0 {
+func extractBodyFields(schema *highbase.Schema) []BodyField {
+	if schema == nil || schema.Properties == nil || orderedmap.Len(schema.Properties) == 0 {
 		return nil
 	}
-	fields := make([]BodyField, 0, len(schema.Required))
+
+	required := make(map[string]struct{}, len(schema.Required))
 	for _, name := range schema.Required {
-		fieldType := "string"
-		if schema.Properties != nil {
-			if propSchema, ok := schema.Properties.Get(name); ok && propSchema != nil {
-				fieldType = resolveSchemaType(propSchema)
-			}
-		}
-		fields = append(fields, BodyField{Name: name, Type: fieldType})
+		required[name] = struct{}{}
 	}
+
+	fields := make([]BodyField, 0, orderedmap.Len(schema.Properties))
+	for prop := orderedmap.First(schema.Properties); prop != nil; prop = prop.Next() {
+		name := prop.Key()
+		propSchema := prop.Value()
+		fieldType := "string"
+		if propSchema != nil {
+			fieldType = resolveSchemaType(propSchema)
+		}
+		_, isRequired := required[name]
+		fields = append(fields, BodyField{Name: name, Type: fieldType, Required: isRequired})
+	}
+
+	sort.Slice(fields, func(i, j int) bool {
+		if fields[i].Required != fields[j].Required {
+			return fields[i].Required
+		}
+		return fields[i].Name < fields[j].Name
+	})
+
 	return fields
 }
 

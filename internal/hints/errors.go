@@ -32,10 +32,11 @@ func Format(op *spec.Operation, cause error) string {
 	}
 
 	return fmt.Sprintf(
-		"Command failed. %v Did you mean to use the body: %s? Required Path Params: %s Required Body Params: %s",
+		"Command failed. %v Did you mean to use the body: %s? Required Path Params: %s Required Body Params: %s Expected Types: %s",
 		cause,
 		BuildBodyTemplate(op),
 		RequiredPathParams(op),
 		RequiredBodyParams(op),
+		ExpectedTypeSummary(op),
 	)
 }

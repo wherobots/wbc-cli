@@ -29,14 +29,16 @@ type Parameter struct {
 }
 
 type RequestBodyInfo struct {
-	Required       bool
-	ContentType    string
-	RequiredFields []BodyField
+	Required    bool
+	ContentType string
+	SchemaType  string
+	Fields      []BodyField
 }
 
 type BodyField struct {
-	Name string
-	Type string
+	Name     string
+	Type     string
+	Required bool
 }
 
 func (o *Operation) Key() string {
@@ -61,9 +63,11 @@ func (o *Operation) RequiredBodyParamNames() []string {
 	if o.RequestBody == nil {
 		return nil
 	}
-	required := make([]string, 0, len(o.RequestBody.RequiredFields))
-	for _, field := range o.RequestBody.RequiredFields {
-		required = append(required, field.Name)
+	required := make([]string, 0, len(o.RequestBody.Fields))
+	for _, field := range o.RequestBody.Fields {
+		if field.Required {
+			required = append(required, field.Name)
+		}
 	}
 	return required
 }

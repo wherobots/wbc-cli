@@ -56,10 +56,13 @@ func TestParseExtractsOperationsAndSchema(t *testing.T) {
 	if op.RequestBody == nil || !op.RequestBody.Required {
 		t.Fatalf("request body should be required")
 	}
-	if len(op.RequestBody.RequiredFields) != 1 {
-		t.Fatalf("required fields = %d, want 1", len(op.RequestBody.RequiredFields))
+	if op.RequestBody.SchemaType != "object" {
+		t.Fatalf("schema type = %s, want object", op.RequestBody.SchemaType)
 	}
-	if op.RequestBody.RequiredFields[0].Name != "enabled" || op.RequestBody.RequiredFields[0].Type != "boolean" {
-		t.Fatalf("required field = %+v, want enabled:boolean", op.RequestBody.RequiredFields[0])
+	if len(op.RequestBody.Fields) != 1 {
+		t.Fatalf("fields = %d, want 1", len(op.RequestBody.Fields))
+	}
+	if op.RequestBody.Fields[0].Name != "enabled" || op.RequestBody.Fields[0].Type != "boolean" || !op.RequestBody.Fields[0].Required {
+		t.Fatalf("field = %+v, want enabled:boolean required", op.RequestBody.Fields[0])
 	}
 }
