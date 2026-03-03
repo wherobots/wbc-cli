@@ -86,6 +86,20 @@ If an endpoint needs file upload/download or non-JSON content, use `--dry-run` a
 - Spec fetch timeout env: `OPENAPI_HTTP_TIMEOUT` (Go duration).
 - On fetch failure, cached spec is used when available.
 
+## Install from release
+
+If you have access to `wherobots/wbc-cli`, use the installer script:
+
+```bash
+./scripts/install-release.sh
+```
+
+Notes:
+- Requires `gh` CLI and `gh auth login` with repo access.
+- Defaults to release tag `latest-prerelease`.
+- Installs to `/usr/local/bin/wherobots` (override with `--install-dir`).
+- Verifies SHA-256 checksum by default.
+
 ## Build and release
 
 ```bash
