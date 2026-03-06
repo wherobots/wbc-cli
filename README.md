@@ -26,6 +26,46 @@ wherobots --tree
 wherobots <resource> <verb> --id user-123 --limit 10 --metadata-json '{"k":"v"}'
 ```
 
+## Custom jobs commands
+
+This CLI also provides custom workflows for jobs under `wherobots jobs`.
+These commands live beside the generated OpenAPI commands and focus on
+high-value run/log/list flows.
+
+```bash
+# submit a run (prints run id)
+wherobots jobs run s3://bucket/script.py --name my-job-001
+
+# submit local script (auto-upload uses your managed Wherobots Cloud directory)
+wherobots jobs run ./script.py --name my-job-001
+
+# override upload root path for local script uploads
+wherobots jobs run ./script.py --name my-job-001 --upload-path s3://my-bucket/custom/root
+
+# or set an environment default
+export WHEROBOTS_UPLOAD_PATH=s3://my-bucket/custom/root
+
+# submit and stream logs until terminal status
+wherobots jobs run s3://bucket/script.py --name my-job-001 --watch
+
+# fetch logs once
+wherobots jobs logs <run-id>
+
+# follow logs until completion
+wherobots jobs logs <run-id> --follow
+
+# list runs (JSON by default)
+wherobots jobs list
+
+# human-readable table output
+wherobots jobs list --output text
+
+# shorthand aliases
+wherobots jobs running
+wherobots jobs failed
+wherobots jobs completed
+```
+
 ## How commands are generated
 
 - Noun/resource hierarchy comes from OpenAPI paths.

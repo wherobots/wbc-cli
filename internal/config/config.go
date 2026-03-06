@@ -11,15 +11,16 @@ import (
 )
 
 const (
-	defaultAppName     = "wherobots"
-	defaultOpenAPISpec = "https://api.cloud.wherobots.com/openapi.json"
-	defaultCacheTTL    = 15 * time.Minute
-	defaultHTTPTimeout = 30 * time.Second
-	envAppName         = "APP_NAME"
-	envWherobotsAPIURL = "WHEROBOTS_API_URL"
-	envWherobotsAPIKey = "WHEROBOTS_API_KEY"
-	envOpenAPICacheTTL = "OPENAPI_CACHE_TTL"
-	envHTTPTimeout     = "OPENAPI_HTTP_TIMEOUT"
+	defaultAppName         = "wherobots"
+	defaultOpenAPISpec     = "https://api.cloud.wherobots.com/openapi.json"
+	defaultCacheTTL        = 15 * time.Minute
+	defaultHTTPTimeout     = 30 * time.Second
+	envAppName             = "APP_NAME"
+	envWherobotsAPIURL     = "WHEROBOTS_API_URL"
+	envWherobotsAPIKey     = "WHEROBOTS_API_KEY"
+	envWherobotsUploadPath = "WHEROBOTS_UPLOAD_PATH"
+	envOpenAPICacheTTL     = "OPENAPI_CACHE_TTL"
+	envHTTPTimeout         = "OPENAPI_HTTP_TIMEOUT"
 )
 
 type Config struct {
@@ -30,6 +31,7 @@ type Config struct {
 	CacheMeta   string
 	CacheTTL    time.Duration
 	HTTPTimeout time.Duration
+	UploadPath  string
 }
 
 func Load() (Config, error) {
@@ -59,6 +61,8 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("parse %s: %w", envHTTPTimeout, err)
 	}
 
+	uploadPath := strings.TrimSpace(os.Getenv(envWherobotsUploadPath))
+
 	return Config{
 		AppName:     appName,
 		OpenAPIURL:  openAPIURL,
@@ -67,6 +71,7 @@ func Load() (Config, error) {
 		CacheMeta:   filepath.Join(cacheDir, "spec.meta.json"),
 		CacheTTL:    ttl,
 		HTTPTimeout: timeout,
+		UploadPath:  uploadPath,
 	}, nil
 }
 
