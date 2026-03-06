@@ -46,6 +46,7 @@ type jobsRunner struct {
 	createRun       *spec.Operation
 	createUploadURL *spec.Operation
 	getDirectory    *spec.Operation
+	getIntegration  *spec.Operation
 	getOrganization *spec.Operation
 	getRun          *spec.Operation
 	getRunLogs      *spec.Operation
@@ -89,6 +90,7 @@ func newJobsRunner(cfg config.Config, runtimeSpec *spec.RuntimeSpec, client *htt
 		createRun:       findOperation(runtimeSpec, "POST", "/runs"),
 		createUploadURL: findOperation(runtimeSpec, "POST", "/files/upload-url"),
 		getDirectory:    findOperation(runtimeSpec, "GET", "/files/dir"),
+		getIntegration:  findOperation(runtimeSpec, "GET", "/files/integration-dir"),
 		getOrganization: findOperation(runtimeSpec, "GET", "/organization"),
 		getRun:          findOperation(runtimeSpec, "GET", "/runs/{run_id}"),
 		getRunLogs:      findOperation(runtimeSpec, "GET", "/runs/{run_id}/logs"),
@@ -425,13 +427,61 @@ func (r *jobsRunner) resolveManagedUploadTarget(ctx context.Context, uploadPathO
 		return "", "", fmt.Errorf("unable to resolve managed storage directory via API: organization fileStore bucket not available")
 	}
 
+	integrationIDs := make([]string, 0, 4)
+	storageIntegrations := gjson.GetBytes(orgBody, "storageIntegrations")
+	if storageIntegrations.IsArray() {
+		for _, item := range storageIntegrations.Array() {
+			id := strings.TrimSpace(item.Get("id").String())
+			if id == "" {
+				continue
+			}
+			path := strings.TrimSpace(item.Get("path").String())
+			if strings.HasPrefix(strings.ToLower(path), "s3://"+strings.ToLower(bucket)+"/") || strings.EqualFold(path, "s3://"+bucket) {
+				integrationIDs = append([]string{id}, integrationIDs...)
+				continue
+			}
+			integrationIDs = append(integrationIDs, id)
+		}
+	}
+	if fallbackID := strings.TrimSpace(gjson.GetBytes(orgBody, "fileStore.id").String()); fallbackID != "" {
+		integrationIDs = append(integrationIDs, fallbackID)
+	}
+
+	seenIntegrationID := map[string]struct{}{}
+	for _, integrationID := range integrationIDs {
+		if integrationID == "" {
+			continue
+		}
+		if _, seen := seenIntegrationID[integrationID]; seen {
+			continue
+		}
+		seenIntegrationID[integrationID] = struct{}{}
+		if r.getIntegration == nil {
+			break
+		}
+		integrationBody, integrationErr := r.execWithRetry(ctx, r.getIntegration, nil, []executor.QueryPair{{Key: "integration_id", Value: integrationID}, {Key: "dir", Value: "/"}}, "")
+		if integrationErr != nil {
+			continue
+		}
+		path := strings.TrimSpace(gjson.GetBytes(integrationBody, "path").String())
+		if path != "" {
+			parsedBucket, prefix, ok := splitS3Path(path)
+			if ok && parsedBucket != "" {
+				if prefix == "" {
+					prefix = "wherobots-jobs"
+				}
+				return parsedBucket, prefix, nil
+			}
+		}
+	}
+
 	rootDir := fmt.Sprintf("s3://%s/", bucket)
+	path := ""
 	dirBody, err := r.execWithRetry(ctx, r.getDirectory, nil, []executor.QueryPair{{Key: "dir", Value: rootDir}}, "")
 	if err != nil {
 		return "", "", fmt.Errorf("unable to resolve managed storage directory via API: %w", err)
 	}
-
-	path := strings.TrimSpace(gjson.GetBytes(dirBody, "path").String())
+	path = strings.TrimSpace(gjson.GetBytes(dirBody, "path").String())
 	if path == "" {
 		return "", "", fmt.Errorf("managed storage directory response missing path")
 	}

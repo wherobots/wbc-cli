@@ -135,9 +135,14 @@ func TestJobsRunAutoUploadLocalScript(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/files/upload-url":
 			_, _ = io.WriteString(w, fmt.Sprintf(`{"uploadUrl":%q}`, serverURLWithPath(serverURLFromRequest(r), "/upload")))
 		case r.Method == http.MethodGet && r.URL.Path == "/organization":
-			_, _ = io.WriteString(w, `{"fileStore":{"bucketName":"managed-bucket"}}`)
-		case r.Method == http.MethodGet && r.URL.Path == "/files/dir":
+			_, _ = io.WriteString(w, `{"fileStore":{"id":"fs-file-store","bucketName":"managed-bucket"},"storageIntegrations":[{"id":"si-managed","path":"s3://managed-bucket/customer/root"}]}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/files/integration-dir":
+			if r.URL.Query().Get("integration_id") != "si-managed" {
+				t.Fatalf("expected integration_id si-managed, got %q", r.URL.Query().Get("integration_id"))
+			}
 			_, _ = io.WriteString(w, `{"name":"root","path":"s3://managed-bucket/customer/root"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/files/dir":
+			t.Fatalf("did not expect /files/dir fallback when integration-dir works")
 		case r.Method == http.MethodPut && r.URL.Path == "/upload":
 			sawUpload = true
 			w.WriteHeader(http.StatusOK)
@@ -165,6 +170,65 @@ func TestJobsRunAutoUploadLocalScript(t *testing.T) {
 	}
 	if !sawUpload || !sawCreateRun {
 		t.Fatalf("expected upload and create-run calls; upload=%v create=%v", sawUpload, sawCreateRun)
+	}
+}
+
+func TestJobsRunAutoUploadFallsBackToFilesDirWhenIntegrationDirFails(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	script := dir + "/script.py"
+	if err := os.WriteFile(script, []byte("print('ok')\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	var sawIntegrationDir bool
+	var sawFilesDir bool
+	var sawUpload bool
+	var sawCreateRun bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/organization":
+			_, _ = io.WriteString(w, `{"fileStore":{"id":"fs-file-store","bucketName":"managed-bucket"},"storageIntegrations":[{"id":"si-managed","path":"s3://managed-bucket/customer/root"}]}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/files/integration-dir":
+			sawIntegrationDir = true
+			http.Error(w, `{"error":"no integration"}`, http.StatusBadRequest)
+		case r.Method == http.MethodGet && r.URL.Path == "/files/dir":
+			sawFilesDir = true
+			_, _ = io.WriteString(w, `{"name":"root","path":"s3://managed-bucket/customer/root"}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/files/upload-url":
+			_, _ = io.WriteString(w, fmt.Sprintf(`{"uploadUrl":%q}`, serverURLWithPath(serverURLFromRequest(r), "/upload")))
+		case r.Method == http.MethodPut && r.URL.Path == "/upload":
+			sawUpload = true
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && r.URL.Path == "/runs":
+			sawCreateRun = true
+			body, _ := io.ReadAll(r.Body)
+			if !strings.Contains(string(body), "s3://managed-bucket/customer/root/test-job-001/script.py") {
+				t.Fatalf("expected auto-uploaded s3 URI in payload, got %s", string(body))
+			}
+			_, _ = io.WriteString(w, `{"id":"run-auto","status":"PENDING"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	root := buildJobsTestRoot(server.URL)
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"jobs", "run", script, "--name", "test-job-001"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !sawUpload || !sawCreateRun {
+		t.Fatalf("expected upload and create-run calls; upload=%v create=%v", sawUpload, sawCreateRun)
+	}
+	if !sawIntegrationDir || !sawFilesDir {
+		t.Fatalf("expected integration-dir then files/dir fallback; integration=%v filesDir=%v", sawIntegrationDir, sawFilesDir)
 	}
 }
 
@@ -424,6 +488,14 @@ func buildJobsTestRootWithConfig(baseURL string, mutate func(*config.Config)) *c
 			{
 				Method: "GET",
 				Path:   "/organization",
+			},
+			{
+				Method: "GET",
+				Path:   "/files/integration-dir",
+				QueryParams: []spec.Parameter{
+					{Name: "integration_id", Location: "query", Required: true, Type: "string"},
+					{Name: "dir", Location: "query", Required: true, Type: "string"},
+				},
 			},
 			{
 				Method: "GET",
