@@ -45,6 +45,7 @@ type jobsRunner struct {
 	client          *http.Client
 	createRun       *spec.Operation
 	createUploadURL *spec.Operation
+	getDirectory    *spec.Operation
 	getRun          *spec.Operation
 	getRunLogs      *spec.Operation
 	listRuns        *spec.Operation
@@ -86,12 +87,13 @@ func newJobsRunner(cfg config.Config, runtimeSpec *spec.RuntimeSpec, client *htt
 		client:          client,
 		createRun:       findOperation(runtimeSpec, "POST", "/runs"),
 		createUploadURL: findOperation(runtimeSpec, "POST", "/files/upload-url"),
+		getDirectory:    findOperation(runtimeSpec, "GET", "/files/dir"),
 		getRun:          findOperation(runtimeSpec, "GET", "/runs/{run_id}"),
 		getRunLogs:      findOperation(runtimeSpec, "GET", "/runs/{run_id}/logs"),
 		listRuns:        findOperation(runtimeSpec, "GET", "/runs"),
 	}
 
-	if r.createRun == nil || r.getRun == nil || r.getRunLogs == nil || r.listRuns == nil || r.createUploadURL == nil {
+	if r.createRun == nil || r.getRun == nil || r.getRunLogs == nil || r.listRuns == nil || r.createUploadURL == nil || r.getDirectory == nil {
 		return nil, false
 	}
 	return r, true
@@ -364,8 +366,10 @@ func (r *jobsRunner) prepareScript(ctx context.Context, script, name string, noU
 	if noUpload {
 		return "", fmt.Errorf("local script path requires upload; remove --no-upload or provide s3:// URI")
 	}
-	if strings.TrimSpace(r.cfg.S3Bucket) == "" {
-		return "", fmt.Errorf("WHEROBOTS_S3_BUCKET is required to auto-upload local scripts")
+
+	bucket, prefix, err := r.resolveManagedUploadTarget(ctx)
+	if err != nil {
+		return "", err
 	}
 
 	info, err := os.Stat(script)
@@ -376,7 +380,7 @@ func (r *jobsRunner) prepareScript(ctx context.Context, script, name string, noU
 		return "", fmt.Errorf("script path is not a file: %s", script)
 	}
 
-	key := fmt.Sprintf("%s/%s/%s", strings.Trim(r.cfg.S3Prefix, "/"), name, filepath.Base(script))
+	key := fmt.Sprintf("%s/%s/%s", strings.Trim(prefix, "/"), name, filepath.Base(script))
 	respBody, err := r.execWithRetry(ctx, r.createUploadURL, nil, []executor.QueryPair{{Key: "key", Value: key}}, "")
 	if err != nil {
 		return "", err
@@ -391,7 +395,69 @@ func (r *jobsRunner) prepareScript(ctx context.Context, script, name string, noU
 		return "", err
 	}
 
-	return fmt.Sprintf("s3://%s/%s", r.cfg.S3Bucket, key), nil
+	return fmt.Sprintf("s3://%s/%s", bucket, key), nil
+}
+
+func (r *jobsRunner) resolveManagedUploadTarget(ctx context.Context) (string, string, error) {
+	dirBody, err := r.execWithRetry(ctx, r.getDirectory, nil, []executor.QueryPair{{Key: "dir", Value: "/"}}, "")
+	if err != nil {
+		if strings.TrimSpace(r.cfg.S3Bucket) == "" {
+			return "", "", fmt.Errorf("unable to resolve managed storage directory via API; set WHEROBOTS_S3_BUCKET as fallback: %w", err)
+		}
+		return strings.TrimSpace(r.cfg.S3Bucket), strings.Trim(strings.TrimSpace(r.cfg.S3Prefix), "/"), nil
+	}
+
+	path := strings.TrimSpace(gjson.GetBytes(dirBody, "path").String())
+	if path == "" {
+		if strings.TrimSpace(r.cfg.S3Bucket) == "" {
+			return "", "", fmt.Errorf("managed storage directory response missing path")
+		}
+		return strings.TrimSpace(r.cfg.S3Bucket), strings.Trim(strings.TrimSpace(r.cfg.S3Prefix), "/"), nil
+	}
+
+	bucket, prefix, ok := splitS3Path(path)
+	if !ok {
+		if strings.TrimSpace(r.cfg.S3Bucket) == "" {
+			return "", "", fmt.Errorf("managed storage directory is not a valid s3 path: %q", path)
+		}
+		return strings.TrimSpace(r.cfg.S3Bucket), strings.Trim(strings.TrimSpace(r.cfg.S3Prefix), "/"), nil
+	}
+
+	if bucket == "" {
+		if strings.TrimSpace(r.cfg.S3Bucket) == "" {
+			return "", "", fmt.Errorf("managed storage path missing bucket")
+		}
+		bucket = strings.TrimSpace(r.cfg.S3Bucket)
+	}
+	if prefix == "" {
+		prefix = strings.Trim(strings.TrimSpace(r.cfg.S3Prefix), "/")
+	}
+	if prefix == "" {
+		prefix = "wherobots-jobs"
+	}
+
+	return bucket, prefix, nil
+}
+
+func splitS3Path(path string) (string, string, bool) {
+	trimmed := strings.TrimSpace(path)
+	if !strings.HasPrefix(strings.ToLower(trimmed), "s3://") {
+		return "", "", false
+	}
+	withoutScheme := strings.TrimPrefix(trimmed, "s3://")
+	parts := strings.SplitN(withoutScheme, "/", 2)
+	if len(parts) == 0 {
+		return "", "", false
+	}
+	bucket := strings.TrimSpace(parts[0])
+	if bucket == "" {
+		return "", "", false
+	}
+	prefix := ""
+	if len(parts) == 2 {
+		prefix = strings.Trim(parts[1], "/")
+	}
+	return bucket, prefix, true
 }
 
 func (r *jobsRunner) newLogsCommand() *cobra.Command {

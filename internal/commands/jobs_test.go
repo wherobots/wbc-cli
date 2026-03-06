@@ -26,6 +26,9 @@ func TestJobsRunNoWatchPrintsRunID(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/files/upload-url":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"uploadUrl":"https://example.com/upload"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/files/dir":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"name":"root","path":"s3://managed-bucket/customer/root"}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/runs":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"id":"run-123","status":"PENDING"}`)
@@ -63,6 +66,8 @@ func TestJobsRunWatchReturnsErrorOnFailedStatus(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/files/upload-url":
 			_, _ = io.WriteString(w, `{"uploadUrl":"https://example.com/upload"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/files/dir":
+			_, _ = io.WriteString(w, `{"name":"root","path":"s3://managed-bucket/customer/root"}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/runs":
 			_, _ = io.WriteString(w, `{"id":"run-xyz","status":"PENDING"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/runs/run-xyz/logs":
@@ -123,13 +128,15 @@ func TestJobsRunAutoUploadLocalScript(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/files/upload-url":
 			_, _ = io.WriteString(w, fmt.Sprintf(`{"uploadUrl":%q}`, serverURLWithPath(serverURLFromRequest(r), "/upload")))
+		case r.Method == http.MethodGet && r.URL.Path == "/files/dir":
+			_, _ = io.WriteString(w, `{"name":"root","path":"s3://managed-bucket/customer/root"}`)
 		case r.Method == http.MethodPut && r.URL.Path == "/upload":
 			sawUpload = true
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodPost && r.URL.Path == "/runs":
 			sawCreateRun = true
 			body, _ := io.ReadAll(r.Body)
-			if !strings.Contains(string(body), "s3://bucket-test/wherobots-jobs/test-job-001/script.py") {
+			if !strings.Contains(string(body), "s3://managed-bucket/customer/root/test-job-001/script.py") {
 				t.Fatalf("expected auto-uploaded s3 URI in payload, got %s", string(body))
 			}
 			_, _ = io.WriteString(w, `{"id":"run-auto","status":"PENDING"}`)
@@ -139,10 +146,7 @@ func TestJobsRunAutoUploadLocalScript(t *testing.T) {
 	}))
 	defer server.Close()
 
-	root := buildJobsTestRootWithConfig(server.URL, func(cfg *config.Config) {
-		cfg.S3Bucket = "bucket-test"
-		cfg.S3Prefix = "wherobots-jobs"
-	})
+	root := buildJobsTestRoot(server.URL)
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&bytes.Buffer{})
@@ -166,6 +170,10 @@ func TestJobsRunNoUploadWithLocalScriptFails(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/files/dir" {
+			http.NotFound(w, r)
+			return
+		}
 		http.NotFound(w, r)
 	}))
 	defer server.Close()
@@ -301,6 +309,13 @@ func buildJobsTestRootWithConfig(baseURL string, mutate func(*config.Config)) *c
 	runtime := &spec.RuntimeSpec{
 		BaseURL: baseURL,
 		Operations: []*spec.Operation{
+			{
+				Method: "GET",
+				Path:   "/files/dir",
+				QueryParams: []spec.Parameter{
+					{Name: "dir", Location: "query", Required: true, Type: "string"},
+				},
+			},
 			{
 				Method: "POST",
 				Path:   "/files/upload-url",
