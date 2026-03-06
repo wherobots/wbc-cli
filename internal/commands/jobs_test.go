@@ -180,7 +180,7 @@ func TestJobsRunNoUploadWithLocalScriptFails(t *testing.T) {
 	defer server.Close()
 
 	root := buildJobsTestRootWithConfig(server.URL, func(cfg *config.Config) {
-		cfg.S3Bucket = "bucket-test"
+		cfg.UploadPath = ""
 	})
 	root.SetOut(&bytes.Buffer{})
 	root.SetErr(&bytes.Buffer{})

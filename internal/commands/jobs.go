@@ -415,36 +415,21 @@ func (r *jobsRunner) resolveManagedUploadTarget(ctx context.Context, uploadPathO
 
 	dirBody, err := r.execWithRetry(ctx, r.getDirectory, nil, []executor.QueryPair{{Key: "dir", Value: "/"}}, "")
 	if err != nil {
-		if strings.TrimSpace(r.cfg.S3Bucket) == "" {
-			return "", "", fmt.Errorf("unable to resolve managed storage directory via API; set WHEROBOTS_S3_BUCKET as fallback: %w", err)
-		}
-		return strings.TrimSpace(r.cfg.S3Bucket), strings.Trim(strings.TrimSpace(r.cfg.S3Prefix), "/"), nil
+		return "", "", fmt.Errorf("unable to resolve managed storage directory via API: %w", err)
 	}
 
 	path := strings.TrimSpace(gjson.GetBytes(dirBody, "path").String())
 	if path == "" {
-		if strings.TrimSpace(r.cfg.S3Bucket) == "" {
-			return "", "", fmt.Errorf("managed storage directory response missing path")
-		}
-		return strings.TrimSpace(r.cfg.S3Bucket), strings.Trim(strings.TrimSpace(r.cfg.S3Prefix), "/"), nil
+		return "", "", fmt.Errorf("managed storage directory response missing path")
 	}
 
 	bucket, prefix, ok := splitS3Path(path)
 	if !ok {
-		if strings.TrimSpace(r.cfg.S3Bucket) == "" {
-			return "", "", fmt.Errorf("managed storage directory is not a valid s3 path: %q", path)
-		}
-		return strings.TrimSpace(r.cfg.S3Bucket), strings.Trim(strings.TrimSpace(r.cfg.S3Prefix), "/"), nil
+		return "", "", fmt.Errorf("managed storage directory is not a valid s3 path: %q", path)
 	}
 
 	if bucket == "" {
-		if strings.TrimSpace(r.cfg.S3Bucket) == "" {
-			return "", "", fmt.Errorf("managed storage path missing bucket")
-		}
-		bucket = strings.TrimSpace(r.cfg.S3Bucket)
-	}
-	if prefix == "" {
-		prefix = strings.Trim(strings.TrimSpace(r.cfg.S3Prefix), "/")
+		return "", "", fmt.Errorf("managed storage path missing bucket")
 	}
 	if prefix == "" {
 		prefix = "wherobots-jobs"
