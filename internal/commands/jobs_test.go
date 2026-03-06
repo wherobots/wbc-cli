@@ -23,6 +23,9 @@ func TestJobsRunNoWatchPrintsRunID(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/organization":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"fileStore":{"bucketName":"managed-bucket"}}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/files/upload-url":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"uploadUrl":"https://example.com/upload"}`)
@@ -65,6 +68,8 @@ func TestJobsRunWatchReturnsErrorOnFailedStatus(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/organization":
+			_, _ = io.WriteString(w, `{"fileStore":{"bucketName":"managed-bucket"}}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/files/upload-url":
 			_, _ = io.WriteString(w, `{"uploadUrl":"https://example.com/upload"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/files/dir":
@@ -129,6 +134,8 @@ func TestJobsRunAutoUploadLocalScript(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/files/upload-url":
 			_, _ = io.WriteString(w, fmt.Sprintf(`{"uploadUrl":%q}`, serverURLWithPath(serverURLFromRequest(r), "/upload")))
+		case r.Method == http.MethodGet && r.URL.Path == "/organization":
+			_, _ = io.WriteString(w, `{"fileStore":{"bucketName":"managed-bucket"}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/files/dir":
 			_, _ = io.WriteString(w, `{"name":"root","path":"s3://managed-bucket/customer/root"}`)
 		case r.Method == http.MethodPut && r.URL.Path == "/upload":
@@ -205,6 +212,9 @@ func TestJobsRunUsesUploadPathFlagOverride(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/organization":
+			sawDirLookup = true
+			_, _ = io.WriteString(w, `{"fileStore":{"bucketName":"managed-bucket"}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/files/dir":
 			sawDirLookup = true
 			_, _ = io.WriteString(w, `{"name":"root","path":"s3://managed-bucket/customer/root"}`)
@@ -236,7 +246,7 @@ func TestJobsRunUsesUploadPathFlagOverride(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 	if sawDirLookup {
-		t.Fatalf("expected upload-path override to skip /files/dir lookup")
+		t.Fatalf("expected upload-path override to skip managed directory APIs")
 	}
 }
 
@@ -253,6 +263,9 @@ func TestJobsRunUsesUploadPathEnvOverride(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/organization":
+			sawDirLookup = true
+			_, _ = io.WriteString(w, `{"fileStore":{"bucketName":"managed-bucket"}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/files/dir":
 			sawDirLookup = true
 			_, _ = io.WriteString(w, `{"name":"root","path":"s3://managed-bucket/customer/root"}`)
@@ -286,7 +299,7 @@ func TestJobsRunUsesUploadPathEnvOverride(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 	if sawDirLookup {
-		t.Fatalf("expected upload-path env override to skip /files/dir lookup")
+		t.Fatalf("expected upload-path env override to skip managed directory APIs")
 	}
 }
 
@@ -408,6 +421,10 @@ func buildJobsTestRootWithConfig(baseURL string, mutate func(*config.Config)) *c
 	runtime := &spec.RuntimeSpec{
 		BaseURL: baseURL,
 		Operations: []*spec.Operation{
+			{
+				Method: "GET",
+				Path:   "/organization",
+			},
 			{
 				Method: "GET",
 				Path:   "/files/dir",

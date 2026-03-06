@@ -46,6 +46,7 @@ type jobsRunner struct {
 	createRun       *spec.Operation
 	createUploadURL *spec.Operation
 	getDirectory    *spec.Operation
+	getOrganization *spec.Operation
 	getRun          *spec.Operation
 	getRunLogs      *spec.Operation
 	listRuns        *spec.Operation
@@ -88,12 +89,13 @@ func newJobsRunner(cfg config.Config, runtimeSpec *spec.RuntimeSpec, client *htt
 		createRun:       findOperation(runtimeSpec, "POST", "/runs"),
 		createUploadURL: findOperation(runtimeSpec, "POST", "/files/upload-url"),
 		getDirectory:    findOperation(runtimeSpec, "GET", "/files/dir"),
+		getOrganization: findOperation(runtimeSpec, "GET", "/organization"),
 		getRun:          findOperation(runtimeSpec, "GET", "/runs/{run_id}"),
 		getRunLogs:      findOperation(runtimeSpec, "GET", "/runs/{run_id}/logs"),
 		listRuns:        findOperation(runtimeSpec, "GET", "/runs"),
 	}
 
-	if r.createRun == nil || r.getRun == nil || r.getRunLogs == nil || r.listRuns == nil || r.createUploadURL == nil || r.getDirectory == nil {
+	if r.createRun == nil || r.getRun == nil || r.getRunLogs == nil || r.listRuns == nil || r.createUploadURL == nil || r.getDirectory == nil || r.getOrganization == nil {
 		return nil, false
 	}
 	return r, true
@@ -413,7 +415,18 @@ func (r *jobsRunner) resolveManagedUploadTarget(ctx context.Context, uploadPathO
 		return bucket, prefix, nil
 	}
 
-	dirBody, err := r.execWithRetry(ctx, r.getDirectory, nil, []executor.QueryPair{{Key: "dir", Value: "/"}}, "")
+	orgBody, err := r.execWithRetry(ctx, r.getOrganization, nil, nil, "")
+	if err != nil {
+		return "", "", fmt.Errorf("unable to resolve managed storage directory via API: failed to fetch organization: %w", err)
+	}
+
+	bucket := strings.TrimSpace(gjson.GetBytes(orgBody, "fileStore.bucketName").String())
+	if bucket == "" {
+		return "", "", fmt.Errorf("unable to resolve managed storage directory via API: organization fileStore bucket not available")
+	}
+
+	rootDir := fmt.Sprintf("s3://%s/", bucket)
+	dirBody, err := r.execWithRetry(ctx, r.getDirectory, nil, []executor.QueryPair{{Key: "dir", Value: rootDir}}, "")
 	if err != nil {
 		return "", "", fmt.Errorf("unable to resolve managed storage directory via API: %w", err)
 	}
