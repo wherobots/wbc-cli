@@ -39,6 +39,12 @@ wherobots jobs run s3://bucket/script.py --name my-job-001
 # submit local script (auto-upload uses your managed Wherobots Cloud directory)
 wherobots jobs run ./script.py --name my-job-001
 
+# override upload root path for local script uploads
+wherobots jobs run ./script.py --name my-job-001 --upload-path s3://my-bucket/custom/root
+
+# or set an environment default
+export WHEROBOTS_UPLOAD_PATH=s3://my-bucket/custom/root
+
 # submit and stream logs until terminal status
 wherobots jobs run s3://bucket/script.py --name my-job-001 --watch
 

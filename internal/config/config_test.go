@@ -7,6 +7,7 @@ func TestLoadDefaultsToWherobotsOpenAPISpec(t *testing.T) {
 	t.Setenv("WHEROBOTS_API_KEY", "key-1")
 	t.Setenv("WHEROBOTS_S3_BUCKET", "")
 	t.Setenv("WHEROBOTS_S3_PREFIX", "")
+	t.Setenv("WHEROBOTS_UPLOAD_PATH", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -26,6 +27,9 @@ func TestLoadDefaultsToWherobotsOpenAPISpec(t *testing.T) {
 	}
 	if cfg.S3Prefix != "wherobots-jobs" {
 		t.Fatalf("S3Prefix = %q, want %q", cfg.S3Prefix, "wherobots-jobs")
+	}
+	if cfg.UploadPath != "" {
+		t.Fatalf("UploadPath = %q, want empty", cfg.UploadPath)
 	}
 }
 
@@ -57,6 +61,7 @@ func TestLoadReadsS3UploadConfig(t *testing.T) {
 	t.Setenv("WHEROBOTS_API_KEY", "key-1")
 	t.Setenv("WHEROBOTS_S3_BUCKET", "bucket-123")
 	t.Setenv("WHEROBOTS_S3_PREFIX", "/custom/prefix/")
+	t.Setenv("WHEROBOTS_UPLOAD_PATH", "s3://override-bucket/custom/root")
 
 	cfg, err := Load()
 	if err != nil {
@@ -67,5 +72,8 @@ func TestLoadReadsS3UploadConfig(t *testing.T) {
 	}
 	if cfg.S3Prefix != "custom/prefix" {
 		t.Fatalf("S3Prefix = %q, want %q", cfg.S3Prefix, "custom/prefix")
+	}
+	if cfg.UploadPath != "s3://override-bucket/custom/root" {
+		t.Fatalf("UploadPath = %q", cfg.UploadPath)
 	}
 }

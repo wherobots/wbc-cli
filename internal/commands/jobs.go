@@ -127,6 +127,7 @@ func (r *jobsRunner) newRunCommand() *cobra.Command {
 		jarMainClass string
 		watch        bool
 		noUpload     bool
+		uploadPath   string
 		output       string
 	)
 
@@ -145,7 +146,7 @@ func (r *jobsRunner) newRunCommand() *cobra.Command {
 				return fmt.Errorf("invalid --output %q (expected text|json)", output)
 			}
 
-			resolvedScript, err := r.prepareScript(cmd.Context(), script, name, noUpload)
+			resolvedScript, err := r.prepareScript(cmd.Context(), script, name, noUpload, uploadPath)
 			if err != nil {
 				return err
 			}
@@ -224,6 +225,7 @@ func (r *jobsRunner) newRunCommand() *cobra.Command {
 	cmd.Flags().StringVar(&jarMainClass, "jar-main-class", "", "main class (required for JAR files)")
 	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "stream logs until job completes")
 	cmd.Flags().BoolVar(&noUpload, "no-upload", false, "disable auto-upload of local scripts")
+	cmd.Flags().StringVar(&uploadPath, "upload-path", "", "override upload root as s3://bucket/prefix")
 	cmd.Flags().StringVar(&output, "output", outputText, "output format: text|json")
 	_ = cmd.MarkFlagRequired("name")
 
@@ -359,7 +361,7 @@ func isLocalPath(script string) bool {
 	return !strings.HasPrefix(strings.ToLower(trimmed), "s3://")
 }
 
-func (r *jobsRunner) prepareScript(ctx context.Context, script, name string, noUpload bool) (string, error) {
+func (r *jobsRunner) prepareScript(ctx context.Context, script, name string, noUpload bool, uploadPathOverride string) (string, error) {
 	if !isLocalPath(script) {
 		return script, nil
 	}
@@ -367,7 +369,7 @@ func (r *jobsRunner) prepareScript(ctx context.Context, script, name string, noU
 		return "", fmt.Errorf("local script path requires upload; remove --no-upload or provide s3:// URI")
 	}
 
-	bucket, prefix, err := r.resolveManagedUploadTarget(ctx)
+	bucket, prefix, err := r.resolveManagedUploadTarget(ctx, uploadPathOverride)
 	if err != nil {
 		return "", err
 	}
@@ -398,7 +400,19 @@ func (r *jobsRunner) prepareScript(ctx context.Context, script, name string, noU
 	return fmt.Sprintf("s3://%s/%s", bucket, key), nil
 }
 
-func (r *jobsRunner) resolveManagedUploadTarget(ctx context.Context) (string, string, error) {
+func (r *jobsRunner) resolveManagedUploadTarget(ctx context.Context, uploadPathOverride string) (string, string, error) {
+	if bucket, prefix, ok, err := resolveUploadPath(strings.TrimSpace(uploadPathOverride)); err != nil {
+		return "", "", err
+	} else if ok {
+		return bucket, prefix, nil
+	}
+
+	if bucket, prefix, ok, err := resolveUploadPath(strings.TrimSpace(r.cfg.UploadPath)); err != nil {
+		return "", "", err
+	} else if ok {
+		return bucket, prefix, nil
+	}
+
 	dirBody, err := r.execWithRetry(ctx, r.getDirectory, nil, []executor.QueryPair{{Key: "dir", Value: "/"}}, "")
 	if err != nil {
 		if strings.TrimSpace(r.cfg.S3Bucket) == "" {
@@ -437,6 +451,21 @@ func (r *jobsRunner) resolveManagedUploadTarget(ctx context.Context) (string, st
 	}
 
 	return bucket, prefix, nil
+}
+
+func resolveUploadPath(raw string) (bucket, prefix string, ok bool, err error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", "", false, nil
+	}
+	bucket, prefix, valid := splitS3Path(trimmed)
+	if !valid {
+		return "", "", false, fmt.Errorf("invalid upload path %q (expected s3://bucket/prefix)", trimmed)
+	}
+	if prefix == "" {
+		prefix = "wherobots-jobs"
+	}
+	return bucket, prefix, true, nil
 }
 
 func splitS3Path(path string) (string, string, bool) {

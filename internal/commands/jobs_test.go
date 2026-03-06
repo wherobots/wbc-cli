@@ -46,6 +46,7 @@ func TestJobsRunNoWatchPrintsRunID(t *testing.T) {
 		"jobs", "run", "s3://bucket/script.py",
 		"--name", "test-job-001",
 		"--runtime", "tiny",
+		"--upload-path", "s3://override-bucket/custom/prefix",
 	})
 
 	if err := root.Execute(); err != nil {
@@ -188,6 +189,104 @@ func TestJobsRunNoUploadWithLocalScriptFails(t *testing.T) {
 	err := root.Execute()
 	if err == nil || !strings.Contains(err.Error(), "remove --no-upload") {
 		t.Fatalf("expected no-upload validation error, got %v", err)
+	}
+}
+
+func TestJobsRunUsesUploadPathFlagOverride(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	script := dir + "/script.py"
+	if err := os.WriteFile(script, []byte("print('ok')\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	var sawDirLookup bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/files/dir":
+			sawDirLookup = true
+			_, _ = io.WriteString(w, `{"name":"root","path":"s3://managed-bucket/customer/root"}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/files/upload-url":
+			if got := r.URL.Query().Get("key"); !strings.HasPrefix(got, "flag-prefix/") {
+				t.Fatalf("expected key from upload-path flag, got %q", got)
+			}
+			_, _ = io.WriteString(w, fmt.Sprintf(`{"uploadUrl":%q}`, serverURLWithPath(serverURLFromRequest(r), "/upload")))
+		case r.Method == http.MethodPut && r.URL.Path == "/upload":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && r.URL.Path == "/runs":
+			body, _ := io.ReadAll(r.Body)
+			if !strings.Contains(string(body), "s3://flag-bucket/flag-prefix/test-job-001/script.py") {
+				t.Fatalf("expected run payload to use upload-path flag, got %s", string(body))
+			}
+			_, _ = io.WriteString(w, `{"id":"run-flag","status":"PENDING"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	root := buildJobsTestRoot(server.URL)
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"jobs", "run", script, "--name", "test-job-001", "--upload-path", "s3://flag-bucket/flag-prefix"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if sawDirLookup {
+		t.Fatalf("expected upload-path override to skip /files/dir lookup")
+	}
+}
+
+func TestJobsRunUsesUploadPathEnvOverride(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	script := dir + "/script.py"
+	if err := os.WriteFile(script, []byte("print('ok')\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	var sawDirLookup bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/files/dir":
+			sawDirLookup = true
+			_, _ = io.WriteString(w, `{"name":"root","path":"s3://managed-bucket/customer/root"}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/files/upload-url":
+			if got := r.URL.Query().Get("key"); !strings.HasPrefix(got, "env-prefix/") {
+				t.Fatalf("expected key from upload-path env, got %q", got)
+			}
+			_, _ = io.WriteString(w, fmt.Sprintf(`{"uploadUrl":%q}`, serverURLWithPath(serverURLFromRequest(r), "/upload")))
+		case r.Method == http.MethodPut && r.URL.Path == "/upload":
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && r.URL.Path == "/runs":
+			body, _ := io.ReadAll(r.Body)
+			if !strings.Contains(string(body), "s3://env-bucket/env-prefix/test-job-001/script.py") {
+				t.Fatalf("expected run payload to use upload-path env, got %s", string(body))
+			}
+			_, _ = io.WriteString(w, `{"id":"run-env","status":"PENDING"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	root := buildJobsTestRootWithConfig(server.URL, func(cfg *config.Config) {
+		cfg.UploadPath = "s3://env-bucket/env-prefix"
+	})
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"jobs", "run", script, "--name", "test-job-001"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if sawDirLookup {
+		t.Fatalf("expected upload-path env override to skip /files/dir lookup")
 	}
 }
 
