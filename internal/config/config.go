@@ -11,15 +11,18 @@ import (
 )
 
 const (
-	defaultAppName     = "wherobots"
-	defaultOpenAPISpec = "https://api.cloud.wherobots.com/openapi.json"
-	defaultCacheTTL    = 15 * time.Minute
-	defaultHTTPTimeout = 30 * time.Second
-	envAppName         = "APP_NAME"
-	envWherobotsAPIURL = "WHEROBOTS_API_URL"
-	envWherobotsAPIKey = "WHEROBOTS_API_KEY"
-	envOpenAPICacheTTL = "OPENAPI_CACHE_TTL"
-	envHTTPTimeout     = "OPENAPI_HTTP_TIMEOUT"
+	defaultAppName       = "wherobots"
+	defaultOpenAPISpec   = "https://api.cloud.wherobots.com/openapi.json"
+	defaultCacheTTL      = 15 * time.Minute
+	defaultHTTPTimeout   = 30 * time.Second
+	defaultS3Prefix      = "wherobots-jobs"
+	envAppName           = "APP_NAME"
+	envWherobotsAPIURL   = "WHEROBOTS_API_URL"
+	envWherobotsAPIKey   = "WHEROBOTS_API_KEY"
+	envWherobotsS3Bucket = "WHEROBOTS_S3_BUCKET"
+	envWherobotsS3Prefix = "WHEROBOTS_S3_PREFIX"
+	envOpenAPICacheTTL   = "OPENAPI_CACHE_TTL"
+	envHTTPTimeout       = "OPENAPI_HTTP_TIMEOUT"
 )
 
 type Config struct {
@@ -30,6 +33,8 @@ type Config struct {
 	CacheMeta   string
 	CacheTTL    time.Duration
 	HTTPTimeout time.Duration
+	S3Bucket    string
+	S3Prefix    string
 }
 
 func Load() (Config, error) {
@@ -59,6 +64,12 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("parse %s: %w", envHTTPTimeout, err)
 	}
 
+	s3Bucket := strings.TrimSpace(os.Getenv(envWherobotsS3Bucket))
+	s3Prefix := strings.Trim(strings.TrimSpace(getenvDefault(envWherobotsS3Prefix, defaultS3Prefix)), "/")
+	if s3Prefix == "" {
+		s3Prefix = defaultS3Prefix
+	}
+
 	return Config{
 		AppName:     appName,
 		OpenAPIURL:  openAPIURL,
@@ -67,6 +78,8 @@ func Load() (Config, error) {
 		CacheMeta:   filepath.Join(cacheDir, "spec.meta.json"),
 		CacheTTL:    ttl,
 		HTTPTimeout: timeout,
+		S3Bucket:    s3Bucket,
+		S3Prefix:    s3Prefix,
 	}, nil
 }
 

@@ -36,6 +36,10 @@ high-value run/log/list flows.
 # submit a run (prints run id)
 wherobots jobs run s3://bucket/script.py --name my-job-001
 
+# submit local script (auto-upload requires WHEROBOTS_S3_BUCKET)
+export WHEROBOTS_S3_BUCKET=my-bucket
+wherobots jobs run ./script.py --name my-job-001
+
 # submit and stream logs until terminal status
 wherobots jobs run s3://bucket/script.py --name my-job-001 --watch
 

@@ -3,9 +3,11 @@ package commands
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +23,9 @@ func TestJobsRunNoWatchPrintsRunID(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/files/upload-url":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"uploadUrl":"https://example.com/upload"}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/runs":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"id":"run-123","status":"PENDING"}`)
@@ -56,6 +61,8 @@ func TestJobsRunWatchReturnsErrorOnFailedStatus(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/files/upload-url":
+			_, _ = io.WriteString(w, `{"uploadUrl":"https://example.com/upload"}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/runs":
 			_, _ = io.WriteString(w, `{"id":"run-xyz","status":"PENDING"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/runs/run-xyz/logs":
@@ -97,6 +104,82 @@ func TestJobsRunWatchReturnsErrorOnFailedStatus(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "line-1") {
 		t.Fatalf("expected streamed log line, got %q", out.String())
+	}
+}
+
+func TestJobsRunAutoUploadLocalScript(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	script := dir + "/script.py"
+	if err := os.WriteFile(script, []byte("print('ok')\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	var sawUpload bool
+	var sawCreateRun bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/files/upload-url":
+			_, _ = io.WriteString(w, fmt.Sprintf(`{"uploadUrl":%q}`, serverURLWithPath(serverURLFromRequest(r), "/upload")))
+		case r.Method == http.MethodPut && r.URL.Path == "/upload":
+			sawUpload = true
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && r.URL.Path == "/runs":
+			sawCreateRun = true
+			body, _ := io.ReadAll(r.Body)
+			if !strings.Contains(string(body), "s3://bucket-test/wherobots-jobs/test-job-001/script.py") {
+				t.Fatalf("expected auto-uploaded s3 URI in payload, got %s", string(body))
+			}
+			_, _ = io.WriteString(w, `{"id":"run-auto","status":"PENDING"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	root := buildJobsTestRootWithConfig(server.URL, func(cfg *config.Config) {
+		cfg.S3Bucket = "bucket-test"
+		cfg.S3Prefix = "wherobots-jobs"
+	})
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"jobs", "run", script, "--name", "test-job-001"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !sawUpload || !sawCreateRun {
+		t.Fatalf("expected upload and create-run calls; upload=%v create=%v", sawUpload, sawCreateRun)
+	}
+}
+
+func TestJobsRunNoUploadWithLocalScriptFails(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	script := dir + "/script.py"
+	if err := os.WriteFile(script, []byte("print('ok')\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	root := buildJobsTestRootWithConfig(server.URL, func(cfg *config.Config) {
+		cfg.S3Bucket = "bucket-test"
+	})
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"jobs", "run", script, "--name", "test-job-001", "--no-upload"})
+
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "remove --no-upload") {
+		t.Fatalf("expected no-upload validation error, got %v", err)
 	}
 }
 
@@ -203,14 +286,28 @@ func TestBuildRunPayloadRejectsBadDependency(t *testing.T) {
 }
 
 func buildJobsTestRoot(baseURL string) *cobra.Command {
+	return buildJobsTestRootWithConfig(baseURL, nil)
+}
+
+func buildJobsTestRootWithConfig(baseURL string, mutate func(*config.Config)) *cobra.Command {
 	cfg := config.Config{
 		AppName:     "wherobots",
 		APIKey:      "test-key",
 		HTTPTimeout: time.Second,
 	}
+	if mutate != nil {
+		mutate(&cfg)
+	}
 	runtime := &spec.RuntimeSpec{
 		BaseURL: baseURL,
 		Operations: []*spec.Operation{
+			{
+				Method: "POST",
+				Path:   "/files/upload-url",
+				QueryParams: []spec.Parameter{
+					{Name: "key", Location: "query", Required: true, Type: "string"},
+				},
+			},
 			{
 				Method: "POST",
 				Path:   "/runs",
@@ -238,6 +335,18 @@ func buildJobsTestRoot(baseURL string) *cobra.Command {
 		},
 	}
 	return BuildRootCommand(cfg, runtime)
+}
+
+func serverURLFromRequest(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host
+}
+
+func serverURLWithPath(base, path string) string {
+	return strings.TrimRight(base, "/") + path
 }
 
 func gjsonValid(raw string) bool {

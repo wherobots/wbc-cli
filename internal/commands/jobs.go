@@ -40,13 +40,14 @@ var terminalStatuses = map[string]struct{}{
 }
 
 type jobsRunner struct {
-	cfg        config.Config
-	runtime    *spec.RuntimeSpec
-	client     *http.Client
-	createRun  *spec.Operation
-	getRun     *spec.Operation
-	getRunLogs *spec.Operation
-	listRuns   *spec.Operation
+	cfg             config.Config
+	runtime         *spec.RuntimeSpec
+	client          *http.Client
+	createRun       *spec.Operation
+	createUploadURL *spec.Operation
+	getRun          *spec.Operation
+	getRunLogs      *spec.Operation
+	listRuns        *spec.Operation
 }
 
 func addJobsCustomCommands(root *cobra.Command, cfg config.Config, runtimeSpec *spec.RuntimeSpec, client *http.Client) {
@@ -80,16 +81,17 @@ func newJobsRunner(cfg config.Config, runtimeSpec *spec.RuntimeSpec, client *htt
 	}
 
 	r := &jobsRunner{
-		cfg:        cfg,
-		runtime:    runtimeSpec,
-		client:     client,
-		createRun:  findOperation(runtimeSpec, "POST", "/runs"),
-		getRun:     findOperation(runtimeSpec, "GET", "/runs/{run_id}"),
-		getRunLogs: findOperation(runtimeSpec, "GET", "/runs/{run_id}/logs"),
-		listRuns:   findOperation(runtimeSpec, "GET", "/runs"),
+		cfg:             cfg,
+		runtime:         runtimeSpec,
+		client:          client,
+		createRun:       findOperation(runtimeSpec, "POST", "/runs"),
+		createUploadURL: findOperation(runtimeSpec, "POST", "/files/upload-url"),
+		getRun:          findOperation(runtimeSpec, "GET", "/runs/{run_id}"),
+		getRunLogs:      findOperation(runtimeSpec, "GET", "/runs/{run_id}/logs"),
+		listRuns:        findOperation(runtimeSpec, "GET", "/runs"),
 	}
 
-	if r.createRun == nil || r.getRun == nil || r.getRunLogs == nil || r.listRuns == nil {
+	if r.createRun == nil || r.getRun == nil || r.getRunLogs == nil || r.listRuns == nil || r.createUploadURL == nil {
 		return nil, false
 	}
 	return r, true
@@ -141,15 +143,14 @@ func (r *jobsRunner) newRunCommand() *cobra.Command {
 				return fmt.Errorf("invalid --output %q (expected text|json)", output)
 			}
 
-			payload, err := buildRunPayload(script, name, runtimeID, timeoutSec, argsRaw, sparkConfigs, depPypi, depFiles, jarMainClass)
+			resolvedScript, err := r.prepareScript(cmd.Context(), script, name, noUpload)
 			if err != nil {
 				return err
 			}
-			if isLocalPath(script) {
-				if noUpload {
-					return fmt.Errorf("local script paths are not supported in this CLI; provide an s3:// URI")
-				}
-				return fmt.Errorf("local script paths are not supported in this CLI yet; provide an s3:// URI")
+
+			payload, err := buildRunPayload(resolvedScript, name, runtimeID, timeoutSec, argsRaw, sparkConfigs, depPypi, depFiles, jarMainClass)
+			if err != nil {
+				return err
 			}
 
 			payloadJSON, err := json.Marshal(payload)
@@ -354,6 +355,43 @@ func isLocalPath(script string) bool {
 		return false
 	}
 	return !strings.HasPrefix(strings.ToLower(trimmed), "s3://")
+}
+
+func (r *jobsRunner) prepareScript(ctx context.Context, script, name string, noUpload bool) (string, error) {
+	if !isLocalPath(script) {
+		return script, nil
+	}
+	if noUpload {
+		return "", fmt.Errorf("local script path requires upload; remove --no-upload or provide s3:// URI")
+	}
+	if strings.TrimSpace(r.cfg.S3Bucket) == "" {
+		return "", fmt.Errorf("WHEROBOTS_S3_BUCKET is required to auto-upload local scripts")
+	}
+
+	info, err := os.Stat(script)
+	if err != nil {
+		return "", fmt.Errorf("script file not found: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("script path is not a file: %s", script)
+	}
+
+	key := fmt.Sprintf("%s/%s/%s", strings.Trim(r.cfg.S3Prefix, "/"), name, filepath.Base(script))
+	respBody, err := r.execWithRetry(ctx, r.createUploadURL, nil, []executor.QueryPair{{Key: "key", Value: key}}, "")
+	if err != nil {
+		return "", err
+	}
+
+	uploadURL := strings.TrimSpace(gjson.GetBytes(respBody, "uploadUrl").String())
+	if uploadURL == "" {
+		return "", fmt.Errorf("upload URL response missing uploadUrl")
+	}
+
+	if err := executor.UploadFileToPresignedURL(ctx, r.client, uploadURL, script); err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("s3://%s/%s", r.cfg.S3Bucket, key), nil
 }
 
 func (r *jobsRunner) newLogsCommand() *cobra.Command {
