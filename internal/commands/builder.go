@@ -80,8 +80,22 @@ func BuildRootCommand(cfg config.Config, runtimeSpec *spec.RuntimeSpec) *cobra.C
 		return hints.Wrap(findOperationContext(operationByCommand, cmd), err)
 	})
 
+	apiCmd := &cobra.Command{
+		Use:           "api",
+		Short:         "Direct API access to Wherobots services",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if flags.Tree {
+				return printTree(cmd)
+			}
+			return cmd.Help()
+		},
+	}
+	root.AddCommand(apiCmd)
+
 	for _, op := range runtimeSpec.Operations {
-		parent := ensureResourceHierarchy(root, resourceCommands, PathToResourceSegments(op.Path))
+		parent := ensureResourceHierarchy(apiCmd, resourceCommands, PathToResourceSegments(op.Path))
 		verb := uniqueVerbName(parent, ChooseVerb(op))
 		op.Verb = verb
 		op.CommandPath = append(PathToResourceSegments(op.Path), verb)

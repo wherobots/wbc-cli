@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
@@ -50,6 +51,7 @@ type jobsRunner struct {
 	getOrganization *spec.Operation
 	getRun          *spec.Operation
 	getRunLogs      *spec.Operation
+	getRunMetrics   *spec.Operation
 	listRuns        *spec.Operation
 }
 
@@ -75,6 +77,9 @@ func addJobsCustomCommands(root *cobra.Command, cfg config.Config, runtimeSpec *
 	jobsCmd.AddCommand(runner.newRunningAliasCommand())
 	jobsCmd.AddCommand(runner.newFailedAliasCommand())
 	jobsCmd.AddCommand(runner.newCompletedAliasCommand())
+	if runner.getRunMetrics != nil {
+		jobsCmd.AddCommand(runner.newMetricsCommand())
+	}
 	root.AddCommand(jobsCmd)
 }
 
@@ -94,6 +99,7 @@ func newJobsRunner(cfg config.Config, runtimeSpec *spec.RuntimeSpec, client *htt
 		getOrganization: findOperation(runtimeSpec, "GET", "/organization"),
 		getRun:          findOperation(runtimeSpec, "GET", "/runs/{run_id}"),
 		getRunLogs:      findOperation(runtimeSpec, "GET", "/runs/{run_id}/logs"),
+		getRunMetrics:   findOperation(runtimeSpec, "GET", "/runs/{run_id}/metrics"),
 		listRuns:        findOperation(runtimeSpec, "GET", "/runs"),
 	}
 
@@ -180,8 +186,7 @@ func (r *jobsRunner) newRunCommand() *cobra.Command {
 					_, err = fmt.Fprintln(cmd.OutOrStdout(), string(respBody))
 					return err
 				}
-				_, err = fmt.Fprintln(cmd.OutOrStdout(), runID)
-				return err
+				return writeRunSummary(cmd.OutOrStdout(), respBody)
 			}
 
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Submitted run %s\n", runID)
@@ -658,8 +663,41 @@ func (r *jobsRunner) newListCommand() *cobra.Command {
 	cmd.Flags().StringVar(&after, "after", "", "filter runs created after ISO timestamp")
 	cmd.Flags().IntVarP(&limit, "limit", "l", defaultListLimit, "max results")
 	cmd.Flags().StringVar(&region, "region", "", "filter by region")
-	cmd.Flags().StringVar(&output, "output", outputJSON, "output format: text|json")
+	cmd.Flags().StringVar(&output, "output", outputText, "output format: text|json")
 	return cmd
+}
+
+func writeRunSummary(out io.Writer, body []byte) error {
+	id := gjson.GetBytes(body, "id").String()
+	name := gjson.GetBytes(body, "name").String()
+	status := gjson.GetBytes(body, "status").String()
+	created := gjson.GetBytes(body, "createTime").String()
+	runtimeID := gjson.GetBytes(body, "payload.runtime").String()
+	region := gjson.GetBytes(body, "payload.region").String()
+
+	pairs := [][2]string{
+		{"ID", id},
+		{"Name", name},
+		{"Status", status},
+		{"Created", created},
+		{"Runtime", runtimeID},
+		{"Region", region},
+	}
+	maxKeyLen := 0
+	for _, pair := range pairs {
+		if pair[1] != "" && len(pair[0]) > maxKeyLen {
+			maxKeyLen = len(pair[0])
+		}
+	}
+	for _, pair := range pairs {
+		if pair[1] != "" {
+			padding := strings.Repeat(" ", maxKeyLen-len(pair[0]))
+			if _, err := fmt.Fprintf(out, "%s:%s  %s\n", pair[0], padding, pair[1]); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func writeRunListTable(out io.Writer, body []byte) error {
@@ -709,7 +747,7 @@ func (r *jobsRunner) newRunningAliasCommand() *cobra.Command {
 	cmd.Flags().StringVar(&after, "after", "", "filter runs created after ISO timestamp")
 	cmd.Flags().IntVarP(&limit, "limit", "l", defaultListLimit, "max results")
 	cmd.Flags().StringVar(&region, "region", "", "filter by region")
-	cmd.Flags().StringVar(&output, "output", outputJSON, "output format: text|json")
+	cmd.Flags().StringVar(&output, "output", outputText, "output format: text|json")
 	return cmd
 }
 
@@ -735,7 +773,7 @@ func (r *jobsRunner) newFailedAliasCommand() *cobra.Command {
 	cmd.Flags().StringVar(&after, "after", "", "filter runs created after ISO timestamp")
 	cmd.Flags().IntVarP(&limit, "limit", "l", defaultListLimit, "max results")
 	cmd.Flags().StringVar(&region, "region", "", "filter by region")
-	cmd.Flags().StringVar(&output, "output", outputJSON, "output format: text|json")
+	cmd.Flags().StringVar(&output, "output", outputText, "output format: text|json")
 	return cmd
 }
 
@@ -761,8 +799,131 @@ func (r *jobsRunner) newCompletedAliasCommand() *cobra.Command {
 	cmd.Flags().StringVar(&after, "after", "", "filter runs created after ISO timestamp")
 	cmd.Flags().IntVarP(&limit, "limit", "l", defaultListLimit, "max results")
 	cmd.Flags().StringVar(&region, "region", "", "filter by region")
-	cmd.Flags().StringVar(&output, "output", outputJSON, "output format: text|json")
+	cmd.Flags().StringVar(&output, "output", outputText, "output format: text|json")
 	return cmd
+}
+
+func (r *jobsRunner) newMetricsCommand() *cobra.Command {
+	var output string
+
+	cmd := &cobra.Command{
+		Use:           "metrics <run-id>",
+		Short:         "Display instant metrics for a job run",
+		Args:          cobra.ExactArgs(1),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			runID := strings.TrimSpace(args[0])
+			if runID == "" {
+				return fmt.Errorf("run-id is required")
+			}
+			if output != outputText && output != outputJSON {
+				return fmt.Errorf("invalid --output %q (expected text|json)", output)
+			}
+
+			respBody, err := r.execWithRetry(cmd.Context(), r.getRunMetrics, []string{runID}, nil, "")
+			if err != nil {
+				return err
+			}
+
+			if output == outputJSON {
+				_, err = fmt.Fprintln(cmd.OutOrStdout(), string(respBody))
+				return err
+			}
+
+			return writeInstantMetrics(cmd.OutOrStdout(), respBody)
+		},
+	}
+
+	cmd.Flags().StringVar(&output, "output", outputText, "output format: text|json")
+	return cmd
+}
+
+func writeInstantMetrics(out io.Writer, body []byte) error {
+	metrics := gjson.GetBytes(body, "instant_metrics")
+	if !metrics.Exists() || !metrics.IsObject() {
+		_, err := fmt.Fprintln(out, "No instant metrics available.")
+		return err
+	}
+
+	type metricEntry struct {
+		displayName string
+		formatted   string
+	}
+
+	entries := make([]metricEntry, 0)
+	maxNameLen := 0
+
+	metrics.ForEach(func(_, value gjson.Result) bool {
+		displayName := value.Get("display_name").String()
+		if displayName == "" {
+			return true
+		}
+
+		rawValue := value.Get("metric.data.value")
+		format := value.Get("metric.format").String()
+
+		var formatted string
+		if !rawValue.Exists() || rawValue.Type == gjson.Null {
+			formatted = "N/A"
+		} else {
+			formatted = formatMetricValue(rawValue.Float(), format)
+		}
+
+		if len(displayName) > maxNameLen {
+			maxNameLen = len(displayName)
+		}
+		entries = append(entries, metricEntry{displayName: displayName, formatted: formatted})
+		return true
+	})
+
+	if len(entries) == 0 {
+		_, err := fmt.Fprintln(out, "No instant metrics available.")
+		return err
+	}
+
+	for _, entry := range entries {
+		padding := strings.Repeat(" ", maxNameLen-len(entry.displayName))
+		if _, err := fmt.Fprintf(out, "%s:%s  %s\n", entry.displayName, padding, entry.formatted); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func formatMetricValue(value float64, format string) string {
+	switch strings.ToUpper(format) {
+	case "PERCENTAGE":
+		return fmt.Sprintf("%.1f%%", value)
+	case "CURRENCY":
+		return fmt.Sprintf("$%.2f", value)
+	case "BYTES":
+		return formatBytes(value)
+	default:
+		if value == math.Trunc(value) {
+			return fmt.Sprintf("%.0f", value)
+		}
+		return fmt.Sprintf("%g", value)
+	}
+}
+
+func formatBytes(bytes float64) string {
+	if bytes < 0 {
+		return fmt.Sprintf("%.0f B", bytes)
+	}
+	units := []string{"B", "KB", "MB", "GB", "TB", "PB"}
+	if bytes < 1 {
+		return "0 B"
+	}
+	exp := int(math.Log(bytes) / math.Log(1024))
+	if exp >= len(units) {
+		exp = len(units) - 1
+	}
+	val := bytes / math.Pow(1024, float64(exp))
+	if val == math.Trunc(val) {
+		return fmt.Sprintf("%.0f %s", val, units[exp])
+	}
+	return fmt.Sprintf("%.1f %s", val, units[exp])
 }
 
 func (r *jobsRunner) executeList(cmd *cobra.Command, statuses []string, name, after string, limit int, region, output string) error {
