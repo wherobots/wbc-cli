@@ -33,7 +33,7 @@ func TestRootTreeOutput(t *testing.T) {
 	}
 
 	got := out.String()
-	if !strings.Contains(got, "wherobots\n") || !strings.Contains(got, "  users\n") || !strings.Contains(got, "    get\n") || !strings.Contains(got, "    list\n") {
+	if !strings.Contains(got, "wherobots\n") || !strings.Contains(got, "  api\n") || !strings.Contains(got, "    users\n") || !strings.Contains(got, "      get\n") || !strings.Contains(got, "      list\n") {
 		t.Fatalf("tree output missing expected nodes:\n%s", got)
 	}
 }
@@ -59,7 +59,7 @@ func TestDryRunOutputsCurl(t *testing.T) {
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
-	root.SetArgs([]string{"users", "get", "--id", "42", "--expand", "true", "--dry-run"})
+	root.SetArgs([]string{"api", "users", "get", "--id", "42", "--expand", "true", "--dry-run"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -97,7 +97,7 @@ func TestInvalidArgsReturnsUsageHint(t *testing.T) {
 	root := BuildRootCommand(cfg, runtimeSpec)
 	root.SetOut(&bytes.Buffer{})
 	root.SetErr(&bytes.Buffer{})
-	root.SetArgs([]string{"users", "get"})
+	root.SetArgs([]string{"api", "users", "get"})
 
 	err := root.Execute()
 	if err == nil {
@@ -142,7 +142,7 @@ func TestHelpShowsTypedFlagSamples(t *testing.T) {
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
-	root.SetArgs([]string{"users", "update", "--help"})
+	root.SetArgs([]string{"api", "users", "update", "--help"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
