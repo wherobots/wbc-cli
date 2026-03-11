@@ -683,9 +683,16 @@ func writeRunSummary(out io.Writer, body []byte) error {
 		{"Runtime", runtimeID},
 		{"Region", region},
 	}
+	maxKeyLen := 0
+	for _, pair := range pairs {
+		if pair[1] != "" && len(pair[0]) > maxKeyLen {
+			maxKeyLen = len(pair[0])
+		}
+	}
 	for _, pair := range pairs {
 		if pair[1] != "" {
-			if _, err := fmt.Fprintf(out, "%s:\t%s\n", pair[0], pair[1]); err != nil {
+			padding := strings.Repeat(" ", maxKeyLen-len(pair[0]))
+			if _, err := fmt.Fprintf(out, "%s:%s  %s\n", pair[0], padding, pair[1]); err != nil {
 				return err
 			}
 		}
