@@ -18,7 +18,7 @@ import (
 	"wherobots/cli/internal/spec"
 )
 
-func TestJobsRunNoWatchPrintsRunID(t *testing.T) {
+func TestJobsRunNoWatchPrintsSummary(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -34,7 +34,7 @@ func TestJobsRunNoWatchPrintsRunID(t *testing.T) {
 			_, _ = io.WriteString(w, `{"name":"root","path":"s3://managed-bucket/customer/root"}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/runs":
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"id":"run-123","status":"PENDING"}`)
+			_, _ = io.WriteString(w, `{"id":"run-123","name":"test-job-001","status":"PENDING","createTime":"2026-01-01T00:00:00Z","payload":{"runtime":"tiny","region":"aws-us-west-2"}}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -56,8 +56,9 @@ func TestJobsRunNoWatchPrintsRunID(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
-	if got := strings.TrimSpace(out.String()); got != "run-123" {
-		t.Fatalf("expected run id output, got %q", got)
+	got := out.String()
+	if !strings.Contains(got, "run-123") || !strings.Contains(got, "test-job-001") || !strings.Contains(got, "PENDING") {
+		t.Fatalf("expected summary with ID, name, and status, got %q", got)
 	}
 }
 
@@ -396,7 +397,7 @@ func TestJobsLogsJsonOutput(t *testing.T) {
 	}
 }
 
-func TestJobsListDefaultsToJson(t *testing.T) {
+func TestJobsListDefaultsToText(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -419,8 +420,12 @@ func TestJobsListDefaultsToJson(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
-	if !gjsonValid(strings.TrimSpace(out.String())) {
-		t.Fatalf("expected json output by default, got %q", out.String())
+	got := out.String()
+	if !strings.Contains(got, "ID") || !strings.Contains(got, "run-1") {
+		t.Fatalf("expected text table output by default, got %q", got)
+	}
+	if gjsonValid(strings.TrimSpace(got)) {
+		t.Fatalf("expected text output by default, got JSON: %q", got)
 	}
 }
 
@@ -443,7 +448,7 @@ func TestJobsRunningAliasFiltersStatus(t *testing.T) {
 	root := buildJobsTestRoot(server.URL)
 	root.SetOut(&bytes.Buffer{})
 	root.SetErr(&bytes.Buffer{})
-	root.SetArgs([]string{"jobs", "running", "--output", "json"})
+	root.SetArgs([]string{"jobs", "running"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)

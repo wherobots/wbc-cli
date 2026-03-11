@@ -180,8 +180,7 @@ func (r *jobsRunner) newRunCommand() *cobra.Command {
 					_, err = fmt.Fprintln(cmd.OutOrStdout(), string(respBody))
 					return err
 				}
-				_, err = fmt.Fprintln(cmd.OutOrStdout(), runID)
-				return err
+				return writeRunSummary(cmd.OutOrStdout(), respBody)
 			}
 
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Submitted run %s\n", runID)
@@ -658,8 +657,34 @@ func (r *jobsRunner) newListCommand() *cobra.Command {
 	cmd.Flags().StringVar(&after, "after", "", "filter runs created after ISO timestamp")
 	cmd.Flags().IntVarP(&limit, "limit", "l", defaultListLimit, "max results")
 	cmd.Flags().StringVar(&region, "region", "", "filter by region")
-	cmd.Flags().StringVar(&output, "output", outputJSON, "output format: text|json")
+	cmd.Flags().StringVar(&output, "output", outputText, "output format: text|json")
 	return cmd
+}
+
+func writeRunSummary(out io.Writer, body []byte) error {
+	id := gjson.GetBytes(body, "id").String()
+	name := gjson.GetBytes(body, "name").String()
+	status := gjson.GetBytes(body, "status").String()
+	created := gjson.GetBytes(body, "createTime").String()
+	runtimeID := gjson.GetBytes(body, "payload.runtime").String()
+	region := gjson.GetBytes(body, "payload.region").String()
+
+	pairs := [][2]string{
+		{"ID", id},
+		{"Name", name},
+		{"Status", status},
+		{"Created", created},
+		{"Runtime", runtimeID},
+		{"Region", region},
+	}
+	for _, pair := range pairs {
+		if pair[1] != "" {
+			if _, err := fmt.Fprintf(out, "%s:\t%s\n", pair[0], pair[1]); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func writeRunListTable(out io.Writer, body []byte) error {
@@ -709,7 +734,7 @@ func (r *jobsRunner) newRunningAliasCommand() *cobra.Command {
 	cmd.Flags().StringVar(&after, "after", "", "filter runs created after ISO timestamp")
 	cmd.Flags().IntVarP(&limit, "limit", "l", defaultListLimit, "max results")
 	cmd.Flags().StringVar(&region, "region", "", "filter by region")
-	cmd.Flags().StringVar(&output, "output", outputJSON, "output format: text|json")
+	cmd.Flags().StringVar(&output, "output", outputText, "output format: text|json")
 	return cmd
 }
 
@@ -735,7 +760,7 @@ func (r *jobsRunner) newFailedAliasCommand() *cobra.Command {
 	cmd.Flags().StringVar(&after, "after", "", "filter runs created after ISO timestamp")
 	cmd.Flags().IntVarP(&limit, "limit", "l", defaultListLimit, "max results")
 	cmd.Flags().StringVar(&region, "region", "", "filter by region")
-	cmd.Flags().StringVar(&output, "output", outputJSON, "output format: text|json")
+	cmd.Flags().StringVar(&output, "output", outputText, "output format: text|json")
 	return cmd
 }
 
@@ -761,7 +786,7 @@ func (r *jobsRunner) newCompletedAliasCommand() *cobra.Command {
 	cmd.Flags().StringVar(&after, "after", "", "filter runs created after ISO timestamp")
 	cmd.Flags().IntVarP(&limit, "limit", "l", defaultListLimit, "max results")
 	cmd.Flags().StringVar(&region, "region", "", "filter by region")
-	cmd.Flags().StringVar(&output, "output", outputJSON, "output format: text|json")
+	cmd.Flags().StringVar(&output, "output", outputText, "output format: text|json")
 	return cmd
 }
 
