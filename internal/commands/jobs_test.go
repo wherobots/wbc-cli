@@ -455,6 +455,169 @@ func TestJobsRunningAliasFiltersStatus(t *testing.T) {
 	}
 }
 
+func TestJobsMetricsTextOutput(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/runs/run-999/metrics" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{
+				"series_metrics": {},
+				"instant_metrics": {
+					"CPU_UTILIZATION_PERCENT": {
+						"display_name": "CPU Utilization",
+						"metric": {"data": {"value": 45.2, "timestamp": 1710000000}, "format": "PERCENTAGE"}
+					},
+					"COST_USD": {
+						"display_name": "Cost",
+						"metric": {"data": {"value": 3.42, "timestamp": 1710000000}, "format": "CURRENCY"}
+					},
+					"CONSUMED_SPATIAL_UNITS": {
+						"display_name": "Consumed Spatial Units",
+						"metric": {"data": {"value": 150, "timestamp": 1710000000}, "format": "NUMBER"}
+					}
+				}
+			}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	root := buildJobsTestRoot(server.URL)
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"jobs", "metrics", "run-999"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "CPU Utilization") || !strings.Contains(got, "45.2%") {
+		t.Fatalf("expected CPU Utilization with percentage, got %q", got)
+	}
+	if !strings.Contains(got, "Cost") || !strings.Contains(got, "$3.42") {
+		t.Fatalf("expected Cost with currency, got %q", got)
+	}
+	if !strings.Contains(got, "Consumed Spatial Units") || !strings.Contains(got, "150") {
+		t.Fatalf("expected Consumed Spatial Units as number, got %q", got)
+	}
+}
+
+func TestJobsMetricsJsonOutput(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/runs/run-999/metrics" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"series_metrics":{},"instant_metrics":{"COST_USD":{"display_name":"Cost","metric":{"data":{"value":3.42,"timestamp":1710000000},"format":"CURRENCY"}}}}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	root := buildJobsTestRoot(server.URL)
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"jobs", "metrics", "run-999", "--output", "json"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if !gjsonValid(strings.TrimSpace(out.String())) {
+		t.Fatalf("expected JSON output, got %q", out.String())
+	}
+}
+
+func TestJobsMetricsNullValue(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/runs/run-999/metrics" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"series_metrics":{},"instant_metrics":{"GPU_UTILIZATION_PERCENT":{"display_name":"GPU Utilization","metric":{"data":{"value":null,"timestamp":1710000000},"format":"PERCENTAGE"}}}}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	root := buildJobsTestRoot(server.URL)
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"jobs", "metrics", "run-999"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "GPU Utilization") || !strings.Contains(got, "N/A") {
+		t.Fatalf("expected N/A for null metric value, got %q", got)
+	}
+}
+
+func TestJobsMetricsEmptyMetrics(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/runs/run-999/metrics" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"series_metrics":{},"instant_metrics":{}}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	root := buildJobsTestRoot(server.URL)
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"jobs", "metrics", "run-999"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "No instant metrics available.") {
+		t.Fatalf("expected empty metrics message, got %q", got)
+	}
+}
+
+func TestFormatMetricValue(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		value    float64
+		format   string
+		expected string
+	}{
+		{45.2, "PERCENTAGE", "45.2%"},
+		{3.42, "CURRENCY", "$3.42"},
+		{150, "NUMBER", "150"},
+		{1.5, "NUMBER", "1.5"},
+		{1073741824, "BYTES", "1 GB"},
+		{1536, "BYTES", "1.5 KB"},
+		{0, "BYTES", "0 B"},
+		{100, "BYTES", "100 B"},
+	}
+
+	for _, tt := range tests {
+		got := formatMetricValue(tt.value, tt.format)
+		if got != tt.expected {
+			t.Errorf("formatMetricValue(%v, %q) = %q, want %q", tt.value, tt.format, got, tt.expected)
+		}
+	}
+}
+
 func TestBuildRunPayloadRejectsBadDependency(t *testing.T) {
 	t.Parallel()
 
@@ -533,6 +696,12 @@ func buildJobsTestRootWithConfig(baseURL string, mutate func(*config.Config)) *c
 			{
 				Method:         "GET",
 				Path:           "/runs/{run_id}/logs",
+				PathParamOrder: []string{"run_id"},
+				PathParams:     []spec.Parameter{{Name: "run_id", Location: "path", Required: true, Type: "string"}},
+			},
+			{
+				Method:         "GET",
+				Path:           "/runs/{run_id}/metrics",
 				PathParamOrder: []string{"run_id"},
 				PathParams:     []spec.Parameter{{Name: "run_id", Location: "path", Required: true, Type: "string"}},
 			},
