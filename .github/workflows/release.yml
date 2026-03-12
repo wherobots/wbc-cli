@@ -45,7 +45,7 @@ jobs:
                       fi
                       echo "Building ${OUT}"
                       GOOS="${GOOS}" GOARCH="${GOARCH}" CGO_ENABLED=0 \
-                        go build -ldflags "-s -w -X main.version=latest-prerelease -X main.commit=${GITHUB_SHA} -X main.date=${BUILD_DATE}" -o "${OUT}" .
+                        go build -ldflags "-s -w -X main.buildVersion=latest-prerelease -X main.commit=${GITHUB_SHA} -X main.date=${BUILD_DATE}" -o "${OUT}" .
                     done
                   done
                   (cd dist && sha256sum * > checksums.txt)
