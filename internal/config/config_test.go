@@ -61,3 +61,29 @@ func TestLoadReadsUploadPathConfig(t *testing.T) {
 		t.Fatalf("UploadPath = %q", cfg.UploadPath)
 	}
 }
+
+func TestLoadWithStagingUsesStagingSpec(t *testing.T) {
+	t.Setenv("WHEROBOTS_API_URL", "")
+	t.Setenv("WHEROBOTS_API_KEY", "key-1")
+
+	cfg, err := Load(WithStaging())
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.OpenAPIURL != "https://api.staging.wherobots.com/openapi.json" {
+		t.Fatalf("OpenAPIURL = %q, want %q", cfg.OpenAPIURL, "https://api.staging.wherobots.com/openapi.json")
+	}
+}
+
+func TestLoadWithStagingEnvOverridesTakePrecedence(t *testing.T) {
+	t.Setenv("WHEROBOTS_API_URL", "https://api.custom.example.com")
+	t.Setenv("WHEROBOTS_API_KEY", "key-1")
+
+	cfg, err := Load(WithStaging())
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.OpenAPIURL != "https://api.custom.example.com/openapi.json" {
+		t.Fatalf("OpenAPIURL = %q, want %q", cfg.OpenAPIURL, "https://api.custom.example.com/openapi.json")
+	}
+}

@@ -23,6 +23,7 @@ var persistentFlagNames = map[string]struct{}{
 	"q":       {},
 	"dry-run": {},
 	"tree":    {},
+	"staging": {},
 }
 
 type parameterBinding struct {
@@ -75,6 +76,7 @@ func BuildRootCommand(cfg config.Config, runtimeSpec *spec.RuntimeSpec) *cobra.C
 	root.PersistentFlags().StringArrayVarP(&flags.Query, "query", "q", nil, "query pair (key=value), repeatable")
 	root.PersistentFlags().BoolVar(&flags.DryRun, "dry-run", false, "print curl equivalent without executing request")
 	root.PersistentFlags().BoolVar(&flags.Tree, "tree", false, "print available command tree")
+	root.PersistentFlags().Bool("staging", false, "use the Wherobots staging environment")
 
 	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
 		return hints.Wrap(findOperationContext(operationByCommand, cmd), err)

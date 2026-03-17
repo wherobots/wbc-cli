@@ -13,6 +13,7 @@ import (
 const (
 	defaultAppName         = "wherobots"
 	defaultOpenAPISpec     = "https://api.cloud.wherobots.com/openapi.json"
+	stagingOpenAPISpec     = "https://api.staging.wherobots.com/openapi.json"
 	defaultCacheTTL        = 15 * time.Minute
 	defaultHTTPTimeout     = 30 * time.Second
 	envAppName             = "APP_NAME"
@@ -22,6 +23,18 @@ const (
 	envOpenAPICacheTTL     = "OPENAPI_CACHE_TTL"
 	envHTTPTimeout         = "OPENAPI_HTTP_TIMEOUT"
 )
+
+// Option configures Load behavior.
+type Option func(*loadOptions)
+
+type loadOptions struct {
+	staging bool
+}
+
+// WithStaging directs the CLI to use the staging API endpoint.
+func WithStaging() Option {
+	return func(o *loadOptions) { o.staging = true }
+}
 
 type Config struct {
 	AppName     string
@@ -34,9 +47,19 @@ type Config struct {
 	UploadPath  string
 }
 
-func Load() (Config, error) {
+func Load(opts ...Option) (Config, error) {
+	var o loadOptions
+	for _, fn := range opts {
+		fn(&o)
+	}
+
 	appName := getenvDefault(envAppName, defaultAppName)
-	openAPIURL, err := resolveOpenAPISpecURL(os.Getenv(envWherobotsAPIURL))
+
+	fallback := defaultOpenAPISpec
+	if o.staging {
+		fallback = stagingOpenAPISpec
+	}
+	openAPIURL, err := resolveOpenAPISpecURL(os.Getenv(envWherobotsAPIURL), fallback)
 	if err != nil {
 		return Config{}, err
 	}
@@ -75,10 +98,10 @@ func Load() (Config, error) {
 	}, nil
 }
 
-func resolveOpenAPISpecURL(baseURL string) (string, error) {
+func resolveOpenAPISpecURL(baseURL string, fallback string) (string, error) {
 	raw := strings.TrimSpace(baseURL)
 	if raw == "" {
-		return defaultOpenAPISpec, nil
+		return fallback, nil
 	}
 	raw = strings.TrimRight(raw, "/")
 	if !strings.HasSuffix(raw, "/openapi.json") {
