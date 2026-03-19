@@ -233,6 +233,63 @@ func TestJobsRunAutoUploadFallsBackToFilesDirWhenIntegrationDirFails(t *testing.
 	}
 }
 
+func TestJobsRunAutoUploadHandlesBucketNameAsS3URI(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	script := dir + "/script.py"
+	if err := os.WriteFile(script, []byte("print('ok')\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	var dirQueryParam string
+	var sawUpload bool
+	var sawCreateRun bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/organization":
+			// Return bucketName as a full S3 URI (as some API responses may include the s3:// prefix)
+			_, _ = io.WriteString(w, `{"fileStore":{"bucketName":"s3://managed-bucket"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/files/dir":
+			dirQueryParam = r.URL.Query().Get("dir")
+			_, _ = io.WriteString(w, `{"name":"root","path":"s3://managed-bucket/customer/root"}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/files/upload-url":
+			_, _ = io.WriteString(w, fmt.Sprintf(`{"uploadUrl":%q}`, serverURLWithPath(serverURLFromRequest(r), "/upload")))
+		case r.Method == http.MethodPut && r.URL.Path == "/upload":
+			sawUpload = true
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && r.URL.Path == "/runs":
+			sawCreateRun = true
+			body, _ := io.ReadAll(r.Body)
+			if !strings.Contains(string(body), "s3://managed-bucket/customer/root/test-job-001/script.py") {
+				t.Fatalf("expected auto-uploaded s3 URI in payload, got %s", string(body))
+			}
+			_, _ = io.WriteString(w, `{"id":"run-auto","status":"PENDING"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	root := buildJobsTestRoot(server.URL)
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"jobs", "run", script, "--name", "test-job-001"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if !sawUpload || !sawCreateRun {
+		t.Fatalf("expected upload and create-run calls; upload=%v create=%v", sawUpload, sawCreateRun)
+	}
+	// The dir query param passed to /files/dir should be s3://managed-bucket/ (not s3://s3://managed-bucket/)
+	if dirQueryParam != "s3://managed-bucket/" {
+		t.Fatalf("expected dir param s3://managed-bucket/, got %q", dirQueryParam)
+	}
+}
+
 func TestJobsRunNoUploadWithLocalScriptFails(t *testing.T) {
 	t.Parallel()
 

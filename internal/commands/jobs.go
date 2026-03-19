@@ -428,6 +428,11 @@ func (r *jobsRunner) resolveManagedUploadTarget(ctx context.Context, uploadPathO
 	}
 
 	bucket := strings.TrimSpace(gjson.GetBytes(orgBody, "fileStore.bucketName").String())
+	// Normalize bucket: if the API returns a full S3 URI (e.g. "s3://bucket-name"),
+	// extract only the bucket name portion.
+	if parsedBucket, _, ok := splitS3Path(bucket); ok && parsedBucket != "" {
+		bucket = parsedBucket
+	}
 	if bucket == "" {
 		return "", "", fmt.Errorf("unable to resolve managed storage directory via API: organization fileStore bucket not available")
 	}
