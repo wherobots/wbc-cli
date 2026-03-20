@@ -46,7 +46,7 @@ func TestJobsRunNoWatchPrintsSummary(t *testing.T) {
 	root.SetOut(&out)
 	root.SetErr(&bytes.Buffer{})
 	root.SetArgs([]string{
-		"jobs", "run", "s3://bucket/script.py",
+		"job-runs", "create", "s3://bucket/script.py",
 		"--name", "test-job-001",
 		"--runtime", "tiny",
 		"--upload-path", "s3://override-bucket/custom/prefix",
@@ -102,7 +102,7 @@ func TestJobsRunWatchReturnsErrorOnFailedStatus(t *testing.T) {
 	root.SetOut(&out)
 	root.SetErr(&errOut)
 	root.SetArgs([]string{
-		"jobs", "run", "s3://bucket/script.py",
+		"job-runs", "create", "s3://bucket/script.py",
 		"--name", "test-job-001",
 		"--watch",
 	})
@@ -164,7 +164,7 @@ func TestJobsRunAutoUploadLocalScript(t *testing.T) {
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&bytes.Buffer{})
-	root.SetArgs([]string{"jobs", "run", script, "--name", "test-job-001"})
+	root.SetArgs([]string{"job-runs", "create", script, "--name", "test-job-001"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -220,7 +220,7 @@ func TestJobsRunAutoUploadFallsBackToFilesDirWhenIntegrationDirFails(t *testing.
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&bytes.Buffer{})
-	root.SetArgs([]string{"jobs", "run", script, "--name", "test-job-001"})
+	root.SetArgs([]string{"job-runs", "create", script, "--name", "test-job-001"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -276,7 +276,7 @@ func TestJobsRunAutoUploadHandlesBucketNameAsS3URI(t *testing.T) {
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&bytes.Buffer{})
-	root.SetArgs([]string{"jobs", "run", script, "--name", "test-job-001"})
+	root.SetArgs([]string{"job-runs", "create", script, "--name", "test-job-001"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -313,7 +313,7 @@ func TestJobsRunNoUploadWithLocalScriptFails(t *testing.T) {
 	})
 	root.SetOut(&bytes.Buffer{})
 	root.SetErr(&bytes.Buffer{})
-	root.SetArgs([]string{"jobs", "run", script, "--name", "test-job-001", "--no-upload"})
+	root.SetArgs([]string{"job-runs", "create", script, "--name", "test-job-001", "--no-upload"})
 
 	err := root.Execute()
 	if err == nil || !strings.Contains(err.Error(), "remove --no-upload") {
@@ -362,7 +362,7 @@ func TestJobsRunUsesUploadPathFlagOverride(t *testing.T) {
 	root := buildJobsTestRoot(server.URL)
 	root.SetOut(&bytes.Buffer{})
 	root.SetErr(&bytes.Buffer{})
-	root.SetArgs([]string{"jobs", "run", script, "--name", "test-job-001", "--upload-path", "s3://flag-bucket/flag-prefix"})
+	root.SetArgs([]string{"job-runs", "create", script, "--name", "test-job-001", "--upload-path", "s3://flag-bucket/flag-prefix"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -415,7 +415,7 @@ func TestJobsRunUsesUploadPathEnvOverride(t *testing.T) {
 	})
 	root.SetOut(&bytes.Buffer{})
 	root.SetErr(&bytes.Buffer{})
-	root.SetArgs([]string{"jobs", "run", script, "--name", "test-job-001"})
+	root.SetArgs([]string{"job-runs", "create", script, "--name", "test-job-001"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -442,7 +442,7 @@ func TestJobsLogsJsonOutput(t *testing.T) {
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&bytes.Buffer{})
-	root.SetArgs([]string{"jobs", "logs", "run-555", "--output", "json"})
+	root.SetArgs([]string{"job-runs", "logs", "run-555", "--output", "json"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -471,7 +471,7 @@ func TestJobsListDefaultsToText(t *testing.T) {
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&bytes.Buffer{})
-	root.SetArgs([]string{"jobs", "list"})
+	root.SetArgs([]string{"job-runs", "list"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -505,7 +505,7 @@ func TestJobsRunningAliasFiltersStatus(t *testing.T) {
 	root := buildJobsTestRoot(server.URL)
 	root.SetOut(&bytes.Buffer{})
 	root.SetErr(&bytes.Buffer{})
-	root.SetArgs([]string{"jobs", "running"})
+	root.SetArgs([]string{"job-runs", "running"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -545,7 +545,7 @@ func TestJobsMetricsTextOutput(t *testing.T) {
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&bytes.Buffer{})
-	root.SetArgs([]string{"jobs", "metrics", "run-999"})
+	root.SetArgs([]string{"job-runs", "metrics", "run-999"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -580,7 +580,7 @@ func TestJobsMetricsJsonOutput(t *testing.T) {
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&bytes.Buffer{})
-	root.SetArgs([]string{"jobs", "metrics", "run-999", "--output", "json"})
+	root.SetArgs([]string{"job-runs", "metrics", "run-999", "--output", "json"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -608,7 +608,7 @@ func TestJobsMetricsNullValue(t *testing.T) {
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&bytes.Buffer{})
-	root.SetArgs([]string{"jobs", "metrics", "run-999"})
+	root.SetArgs([]string{"job-runs", "metrics", "run-999"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -637,7 +637,7 @@ func TestJobsMetricsEmptyMetrics(t *testing.T) {
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&bytes.Buffer{})
-	root.SetArgs([]string{"jobs", "metrics", "run-999"})
+	root.SetArgs([]string{"job-runs", "metrics", "run-999"})
 
 	if err := root.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
