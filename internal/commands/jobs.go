@@ -62,8 +62,8 @@ func addJobsCustomCommands(root *cobra.Command, cfg config.Config, runtimeSpec *
 	}
 
 	jobsCmd := &cobra.Command{
-		Use:           "jobs",
-		Short:         "Custom jobs workflows",
+		Use:           "job-runs",
+		Short:         "Custom job-runs workflows",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -71,7 +71,7 @@ func addJobsCustomCommands(root *cobra.Command, cfg config.Config, runtimeSpec *
 		},
 	}
 
-	jobsCmd.AddCommand(runner.newRunCommand())
+	jobsCmd.AddCommand(runner.newCreateCommand())
 	jobsCmd.AddCommand(runner.newLogsCommand())
 	jobsCmd.AddCommand(runner.newListCommand())
 	jobsCmd.AddCommand(runner.newRunningAliasCommand())
@@ -124,7 +124,7 @@ func findOperation(runtimeSpec *spec.RuntimeSpec, method, path string) *spec.Ope
 	return nil
 }
 
-func (r *jobsRunner) newRunCommand() *cobra.Command {
+func (r *jobsRunner) newCreateCommand() *cobra.Command {
 	var (
 		name         string
 		runtimeID    string
@@ -142,8 +142,8 @@ func (r *jobsRunner) newRunCommand() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:           "run <script>",
-		Short:         "Submit a job run",
+		Use:           "create <script>",
+		Short:         "Create a job run",
 		Args:          cobra.ExactArgs(1),
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -741,7 +741,7 @@ func (r *jobsRunner) newRunningAliasCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:           "running",
-		Short:         "Alias for jobs list --status RUNNING",
+		Short:         "Alias for job-runs list --status RUNNING",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -767,7 +767,7 @@ func (r *jobsRunner) newFailedAliasCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:           "failed",
-		Short:         "Alias for jobs list --status FAILED",
+		Short:         "Alias for job-runs list --status FAILED",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -793,7 +793,7 @@ func (r *jobsRunner) newCompletedAliasCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:           "completed",
-		Short:         "Alias for jobs list --status COMPLETED",
+		Short:         "Alias for job-runs list --status COMPLETED",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
