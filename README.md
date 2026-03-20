@@ -21,7 +21,7 @@ If you have access to the `wherobots/wbc-cli` repository, use the installer scri
 The script:
 - Detects your OS and architecture automatically.
 - Downloads and verifies the SHA-256 checksum of the binary.
-- Installs to `/usr/local/bin/wherobots` by default (override with `--install-dir`).
+- Installs to `~/.local/bin/wherobots` by default (override with `--install-dir`).
 - Defaults to the `latest-prerelease` release tag.
 
 ### Build from source

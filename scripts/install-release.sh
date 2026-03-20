@@ -4,7 +4,7 @@ set -euo pipefail
 REPO="${WHEROBOTS_CLI_REPO:-wherobots/wbc-cli}"
 TAG="${WHEROBOTS_CLI_TAG:-latest-prerelease}"
 BINARY_NAME="${WHEROBOTS_CLI_BINARY:-wherobots}"
-INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
+INSTALL_DIR="${INSTALL_DIR:-${HOME}/.local/bin}"
 SKIP_CHECKSUM=0
 
 usage() {
@@ -20,7 +20,7 @@ Usage:
 Options:
   --repo <owner/name>      GitHub repository (default: wherobots/wbc-cli)
   --tag <tag>              Release tag (default: latest-prerelease)
-  --install-dir <path>     Install directory (default: /usr/local/bin)
+  --install-dir <path>     Install directory (default: ~/.local/bin)
   --binary-name <name>     Binary name/asset prefix (default: wherobots)
   --skip-checksum          Skip checksum verification
   -h, --help               Show help
@@ -136,15 +136,26 @@ if [[ "$SKIP_CHECKSUM" -eq 0 ]]; then
 fi
 
 TARGET="${INSTALL_DIR}/${BINARY_NAME}"
-if [[ -d "$INSTALL_DIR" && -w "$INSTALL_DIR" ]]; then
+
+# Ensure the install directory exists; create without sudo when possible.
+if [[ ! -d "$INSTALL_DIR" ]]; then
+  if ! mkdir -m 0755 -p "$INSTALL_DIR" 2>/dev/null; then
+    if command -v sudo >/dev/null 2>&1; then
+      sudo mkdir -p "$INSTALL_DIR"
+    else
+      echo "Cannot create $INSTALL_DIR and sudo is unavailable." >&2
+      exit 1
+    fi
+  fi
+fi
+
+if [[ -w "$INSTALL_DIR" ]]; then
   install -m 0755 "$TMP_DIR/$ASSET" "$TARGET"
 else
   if command -v sudo >/dev/null 2>&1; then
-    sudo mkdir -p "$INSTALL_DIR"
     sudo install -m 0755 "$TMP_DIR/$ASSET" "$TARGET"
   else
     echo "No write access to $INSTALL_DIR and sudo is unavailable." >&2
-    echo "Try: --install-dir \"$HOME/.local/bin\"" >&2
     exit 1
   fi
 fi
