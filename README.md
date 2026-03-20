@@ -137,7 +137,7 @@ If you have access to `wherobots/wbc-cli`, use the installer script:
 Notes:
 - Requires `gh` CLI and `gh auth login` with repo access.
 - Defaults to release tag `latest-prerelease`.
-- Installs to `/usr/local/bin/wherobots` (override with `--install-dir`).
+- Installs to `~/.local/bin/wherobots` (override with `--install-dir`).
 - Verifies SHA-256 checksum by default.
 
 ## Build and release
