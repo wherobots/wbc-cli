@@ -284,9 +284,9 @@ func TestJobsRunAutoUploadHandlesBucketNameAsS3URI(t *testing.T) {
 	if !sawUpload || !sawCreateRun {
 		t.Fatalf("expected upload and create-run calls; upload=%v create=%v", sawUpload, sawCreateRun)
 	}
-	// The dir query param passed to /files/dir should be s3://managed-bucket/ (not s3://s3://managed-bucket/)
-	if dirQueryParam != "s3://managed-bucket/" {
-		t.Fatalf("expected dir param s3://managed-bucket/, got %q", dirQueryParam)
+	// The dir query param passed to /files/dir should be the bare bucket name (not s3://managed-bucket/)
+	if dirQueryParam != "managed-bucket" {
+		t.Fatalf("expected dir param managed-bucket, got %q", dirQueryParam)
 	}
 }
 
@@ -341,7 +341,7 @@ func TestJobsRunUsesUploadPathFlagOverride(t *testing.T) {
 			sawDirLookup = true
 			_, _ = io.WriteString(w, `{"name":"root","path":"s3://managed-bucket/customer/root"}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/files/upload-url":
-			if got := r.URL.Query().Get("key"); !strings.HasPrefix(got, "flag-prefix/") {
+			if got := r.URL.Query().Get("key"); !strings.HasPrefix(got, "flag-bucket/flag-prefix/") {
 				t.Fatalf("expected key from upload-path flag, got %q", got)
 			}
 			_, _ = io.WriteString(w, fmt.Sprintf(`{"uploadUrl":%q}`, serverURLWithPath(serverURLFromRequest(r), "/upload")))
@@ -392,7 +392,7 @@ func TestJobsRunUsesUploadPathEnvOverride(t *testing.T) {
 			sawDirLookup = true
 			_, _ = io.WriteString(w, `{"name":"root","path":"s3://managed-bucket/customer/root"}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/files/upload-url":
-			if got := r.URL.Query().Get("key"); !strings.HasPrefix(got, "env-prefix/") {
+			if got := r.URL.Query().Get("key"); !strings.HasPrefix(got, "env-bucket/env-prefix/") {
 				t.Fatalf("expected key from upload-path env, got %q", got)
 			}
 			_, _ = io.WriteString(w, fmt.Sprintf(`{"uploadUrl":%q}`, serverURLWithPath(serverURLFromRequest(r), "/upload")))

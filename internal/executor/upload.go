@@ -51,8 +51,6 @@ func UploadFileToPresignedURL(ctx context.Context, client *http.Client, uploadUR
 	if err != nil {
 		return fmt.Errorf("build upload request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/octet-stream")
-
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("upload request failed: %w", err)

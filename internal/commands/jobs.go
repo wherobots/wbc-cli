@@ -48,6 +48,7 @@ type jobsRunner struct {
 	createUploadURL *spec.Operation
 	getDirectory    *spec.Operation
 	getIntegration  *spec.Operation
+	getMe           *spec.Operation
 	getOrganization *spec.Operation
 	getRun          *spec.Operation
 	getRunLogs      *spec.Operation
@@ -96,6 +97,7 @@ func newJobsRunner(cfg config.Config, runtimeSpec *spec.RuntimeSpec, client *htt
 		createUploadURL: findOperation(runtimeSpec, "POST", "/files/upload-url"),
 		getDirectory:    findOperation(runtimeSpec, "GET", "/files/dir"),
 		getIntegration:  findOperation(runtimeSpec, "GET", "/files/integration-dir"),
+		getMe:           findOperation(runtimeSpec, "GET", "/users/me"),
 		getOrganization: findOperation(runtimeSpec, "GET", "/organization"),
 		getRun:          findOperation(runtimeSpec, "GET", "/runs/{run_id}"),
 		getRunLogs:      findOperation(runtimeSpec, "GET", "/runs/{run_id}/logs"),
@@ -392,7 +394,8 @@ func (r *jobsRunner) prepareScript(ctx context.Context, script, name string, noU
 	}
 
 	key := fmt.Sprintf("%s/%s/%s", strings.Trim(prefix, "/"), name, filepath.Base(script))
-	respBody, err := r.execWithRetry(ctx, r.createUploadURL, nil, []executor.QueryPair{{Key: "key", Value: key}}, "")
+	uploadKey := fmt.Sprintf("%s/%s", bucket, key)
+	respBody, err := r.execWithRetry(ctx, r.createUploadURL, nil, []executor.QueryPair{{Key: "key", Value: uploadKey}}, "")
 	if err != nil {
 		return "", err
 	}
@@ -485,15 +488,37 @@ func (r *jobsRunner) resolveManagedUploadTarget(ctx context.Context, uploadPathO
 		}
 	}
 
-	rootDir := fmt.Sprintf("s3://%s/", bucket)
-	path := ""
-	dirBody, err := r.execWithRetry(ctx, r.getDirectory, nil, []executor.QueryPair{{Key: "dir", Value: rootDir}}, "")
+	orgID := strings.TrimSpace(gjson.GetBytes(orgBody, "id").String())
+
+	// Try to find the user's personal writable directory using the current user's ID.
+	if orgID != "" && r.getMe != nil {
+		if meBody, meErr := r.execWithRetry(ctx, r.getMe, nil, nil, ""); meErr == nil {
+			userID := strings.TrimSpace(gjson.GetBytes(meBody, "id").String())
+			if userID != "" {
+				userDir := fmt.Sprintf("%s/%s/data/customer-%s", bucket, orgID, userID)
+				if dirBody, dirErr := r.execWithRetry(ctx, r.getDirectory, nil, []executor.QueryPair{{Key: "dir", Value: userDir}}, ""); dirErr == nil {
+					path := strings.TrimSpace(gjson.GetBytes(dirBody, "path").String())
+					if !strings.HasPrefix(strings.ToLower(path), "s3://") {
+						path = "s3://" + path
+					}
+					if parsedBucket, prefix, ok := splitS3Path(path); ok && parsedBucket != "" {
+						return parsedBucket, prefix, nil
+					}
+				}
+			}
+		}
+	}
+
+	dirBody, err := r.execWithRetry(ctx, r.getDirectory, nil, []executor.QueryPair{{Key: "dir", Value: bucket}}, "")
 	if err != nil {
 		return "", "", fmt.Errorf("unable to resolve managed storage directory via API: %w", err)
 	}
-	path = strings.TrimSpace(gjson.GetBytes(dirBody, "path").String())
+	path := strings.TrimSpace(gjson.GetBytes(dirBody, "path").String())
 	if path == "" {
 		return "", "", fmt.Errorf("managed storage directory response missing path")
+	}
+	if !strings.HasPrefix(strings.ToLower(path), "s3://") {
+		path = "s3://" + path
 	}
 
 	bucket, prefix, ok := splitS3Path(path)
