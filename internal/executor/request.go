@@ -46,8 +46,8 @@ func BuildRequest(
 	if runtimeSpec.BaseURL == "" {
 		return nil, fmt.Errorf("missing base URL (no OpenAPI servers and WHEROBOTS_API_URL has no resolvable host)")
 	}
-	if cfg.APIKey == "" {
-		return nil, fmt.Errorf("WHEROBOTS_API_KEY is required")
+	if err := cfg.RequireAPIKey(); err != nil {
+		return nil, err
 	}
 	if len(pathArgs) != len(op.PathParamOrder) {
 		return nil, fmt.Errorf("expected %d path arguments, got %d", len(op.PathParamOrder), len(pathArgs))
