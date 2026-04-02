@@ -42,15 +42,28 @@ func TestLoadBuildsSpecURLFromWherobotsAPIURL(t *testing.T) {
 }
 
 func TestLoadRequiresWherobotsAPIKey(t *testing.T) {
-	t.Setenv("WHEROBOTS_API_URL", "https://api.example.com")
+	t.Setenv("WHEROBOTS_API_URL", "")
 	t.Setenv("WHEROBOTS_API_KEY", "")
 
 	_, err := Load()
 	if err == nil {
 		t.Fatalf("expected Load() error")
 	}
-	if !strings.Contains(err.Error(), "https://cloud.wherobots.com/apiKey") {
-		t.Fatalf("error should contain API key URL, got: %v", err)
+	if !strings.Contains(err.Error(), "https://cloud.wherobots.com/settings#api-keys") {
+		t.Fatalf("error should contain default API key URL, got: %v", err)
+	}
+}
+
+func TestLoadMissingKeyUsesCustomAPIHost(t *testing.T) {
+	t.Setenv("WHEROBOTS_API_URL", "https://api.staging.wherobots.com")
+	t.Setenv("WHEROBOTS_API_KEY", "")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatalf("expected Load() error")
+	}
+	if !strings.Contains(err.Error(), "https://staging.wherobots.com/settings#api-keys") {
+		t.Fatalf("error should contain custom API key URL, got: %v", err)
 	}
 }
 

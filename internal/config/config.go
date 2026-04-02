@@ -43,8 +43,8 @@ func Load() (Config, error) {
 	apiKey := strings.TrimSpace(os.Getenv(envWherobotsAPIKey))
 	if apiKey == "" {
 		return Config{}, fmt.Errorf(
-			"%s is required\n\nTo create an API key, visit: https://cloud.wherobots.com/apiKey\nThen export it:\n\n  export %s='<your-api-key>'",
-			envWherobotsAPIKey, envWherobotsAPIKey,
+			"%s is required\n\nTo create an API key, visit: %s\nThen export it:\n\n  export %s='<your-api-key>'",
+			envWherobotsAPIKey, apiKeyURL(openAPIURL), envWherobotsAPIKey,
 		)
 	}
 
@@ -123,6 +123,19 @@ func parseDuration(raw string, fallback time.Duration) (time.Duration, error) {
 		return 0, fmt.Errorf("must be > 0, got %s", d)
 	}
 	return d, nil
+}
+
+// apiKeyURL derives the console settings URL from the resolved OpenAPI spec URL.
+// It strips the "api." prefix from the host (e.g. api.cloud.wherobots.com → cloud.wherobots.com)
+// and appends /settings#api-keys.
+func apiKeyURL(openAPISpecURL string) string {
+	parsed, err := url.Parse(openAPISpecURL)
+	if err != nil {
+		return "https://cloud.wherobots.com/settings#api-keys"
+	}
+	host := parsed.Hostname()
+	host = strings.TrimPrefix(host, "api.")
+	return fmt.Sprintf("%s://%s/settings#api-keys", parsed.Scheme, host)
 }
 
 func getenvDefault(key, fallback string) string {
