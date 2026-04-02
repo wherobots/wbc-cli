@@ -42,7 +42,10 @@ func Load() (Config, error) {
 	}
 	apiKey := strings.TrimSpace(os.Getenv(envWherobotsAPIKey))
 	if apiKey == "" {
-		return Config{}, fmt.Errorf("%s is required", envWherobotsAPIKey)
+		return Config{}, fmt.Errorf(
+			"%s is required\n\nTo create an API key, visit: https://cloud.wherobots.com/apiKey\nThen export it:\n\n  export %s='<your-api-key>'",
+			envWherobotsAPIKey, envWherobotsAPIKey,
+		)
 	}
 
 	cacheRoot, err := os.UserCacheDir()

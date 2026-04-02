@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestLoadDefaultsToWherobotsOpenAPISpec(t *testing.T) {
 	t.Setenv("WHEROBOTS_API_URL", "")
@@ -45,6 +48,9 @@ func TestLoadRequiresWherobotsAPIKey(t *testing.T) {
 	_, err := Load()
 	if err == nil {
 		t.Fatalf("expected Load() error")
+	}
+	if !strings.Contains(err.Error(), "https://cloud.wherobots.com/apiKey") {
+		t.Fatalf("error should contain API key URL, got: %v", err)
 	}
 }
 
