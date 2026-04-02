@@ -41,12 +41,6 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	apiKey := strings.TrimSpace(os.Getenv(envWherobotsAPIKey))
-	if apiKey == "" {
-		return Config{}, fmt.Errorf(
-			"%s is required\n\nTo create an API key, visit: %s\nThen export it:\n\n  export %s='<your-api-key>'",
-			envWherobotsAPIKey, apiKeyURL(openAPIURL), envWherobotsAPIKey,
-		)
-	}
 
 	cacheRoot, err := os.UserCacheDir()
 	if err != nil {
@@ -76,6 +70,18 @@ func Load() (Config, error) {
 		HTTPTimeout: timeout,
 		UploadPath:  uploadPath,
 	}, nil
+}
+
+// RequireAPIKey returns an error with setup instructions when the API key is
+// empty, or nil when a key is present.
+func (c Config) RequireAPIKey() error {
+	if c.APIKey != "" {
+		return nil
+	}
+	return fmt.Errorf(
+		"%s is required\n\nTo create an API key, visit: %s\nThen export it:\n\n  export %s='<your-api-key>'",
+		envWherobotsAPIKey, apiKeyURL(c.OpenAPIURL), envWherobotsAPIKey,
+	)
 }
 
 func resolveOpenAPISpecURL(baseURL string) (string, error) {
