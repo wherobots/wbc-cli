@@ -38,6 +38,44 @@ func TestRootTreeOutput(t *testing.T) {
 	}
 }
 
+func TestExcludedOperationsAbsentFromTree(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{AppName: "wherobots", HTTPTimeout: time.Second}
+	runtimeSpec := &spec.RuntimeSpec{
+		BaseURL: "https://api.example.com",
+		Operations: []*spec.Operation{
+			{Method: "GET", Path: "/catalogs", Summary: "List catalogs"},
+			{Method: "POST", Path: "/management/org", Summary: "Superuser action", Excluded: true},
+			{Method: "POST", Path: "/files/upload-url", Summary: "Legacy upload", Excluded: true},
+		},
+	}
+
+	root := BuildRootCommand(cfg, runtimeSpec)
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"--tree"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	tree := out.String()
+
+	// Visible endpoint should be present
+	if !strings.Contains(tree, "catalogs") {
+		t.Errorf("tree should contain 'catalogs':\n%s", tree)
+	}
+	// Excluded endpoints must not appear
+	if strings.Contains(tree, "management") {
+		t.Errorf("tree must not contain excluded 'management':\n%s", tree)
+	}
+	if strings.Contains(tree, "files") {
+		t.Errorf("tree must not contain excluded 'files':\n%s", tree)
+	}
+}
+
 func TestDryRunOutputsCurl(t *testing.T) {
 	t.Parallel()
 

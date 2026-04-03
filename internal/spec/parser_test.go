@@ -1,6 +1,62 @@
 package spec
 
-import "testing"
+import (
+	"testing"
+)
+
+func TestParseExcludeFromCLIExtension(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte(`{
+  "openapi": "3.0.3",
+  "info": { "title": "x", "version": "1" },
+  "paths": {
+    "/public": {
+      "get": {
+        "operationId": "getPublic",
+        "responses": { "200": { "description": "ok" } }
+      }
+    },
+    "/secret": {
+      "post": {
+        "operationId": "createSecret",
+        "x-exclude-from-cli": true,
+        "responses": { "200": { "description": "ok" } }
+      }
+    },
+    "/also-secret": {
+      "delete": {
+        "operationId": "deleteSecret",
+        "x-exclude-from-cli": true,
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  }
+}`)
+
+	parsed, err := Parse(raw, "")
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(parsed.Operations) != 3 {
+		t.Fatalf("want 3 operations, got %d", len(parsed.Operations))
+	}
+
+	byID := make(map[string]*Operation, len(parsed.Operations))
+	for _, op := range parsed.Operations {
+		byID[op.OperationID] = op
+	}
+
+	if byID["getPublic"].Excluded {
+		t.Error("getPublic should not be excluded")
+	}
+	if !byID["createSecret"].Excluded {
+		t.Error("createSecret should be excluded (x-exclude-from-cli: true)")
+	}
+	if !byID["deleteSecret"].Excluded {
+		t.Error("deleteSecret should be excluded (x-exclude-from-cli: true)")
+	}
+}
 
 func TestParseExtractsOperationsAndSchema(t *testing.T) {
 	t.Parallel()
