@@ -1,0 +1,8 @@
+{
+  "name": "wherobots-cli",
+  "description": "Skills for submitting, monitoring, and debugging Wherobots Cloud job runs via the wherobots CLI",
+  "version": "1.0.0",
+  "author": {
+    "name": "Wherobots"
+  }
+}
