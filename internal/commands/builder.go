@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -23,6 +24,8 @@ var persistentFlagNames = map[string]struct{}{
 	"q":       {},
 	"dry-run": {},
 	"tree":    {},
+	"yes":     {},
+	"y":       {},
 }
 
 type parameterBinding struct {
@@ -75,6 +78,7 @@ func BuildRootCommand(cfg config.Config, runtimeSpec *spec.RuntimeSpec) *cobra.C
 	root.PersistentFlags().StringArrayVarP(&flags.Query, "query", "q", nil, "query pair (key=value), repeatable")
 	root.PersistentFlags().BoolVar(&flags.DryRun, "dry-run", false, "print curl equivalent without executing request")
 	root.PersistentFlags().BoolVar(&flags.Tree, "tree", false, "print available command tree")
+	root.PersistentFlags().BoolVarP(&flags.Yes, "yes", "y", false, "skip confirmation prompt (for CI/scripts)")
 
 	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
 		return hints.Wrap(findOperationContext(operationByCommand, cmd), err)
@@ -95,6 +99,9 @@ func BuildRootCommand(cfg config.Config, runtimeSpec *spec.RuntimeSpec) *cobra.C
 	root.AddCommand(apiCmd)
 
 	for _, op := range runtimeSpec.Operations {
+		if op.Excluded {
+			continue
+		}
 		parent := ensureResourceHierarchy(apiCmd, resourceCommands, PathToResourceSegments(op.Path))
 		verb := uniqueVerbName(parent, ChooseVerb(op))
 		op.Verb = verb
@@ -140,6 +147,12 @@ func buildOperationCommand(
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		if flags.Tree {
 			return printTree(cmd)
+		}
+
+		if !flags.DryRun && isWriteMethod(op.Method) && !flags.Yes {
+			if err := confirmAction(cmd, op); err != nil {
+				return err
+			}
 		}
 
 		parsedQuery, err := ParseQueryPairs(flags.Query)
@@ -683,4 +696,23 @@ func buildOperationShort(op *spec.Operation) string {
 		return summary
 	}
 	return fmt.Sprintf("%s operation", strings.ToUpper(op.Method))
+}
+
+func isWriteMethod(method string) bool {
+	switch strings.ToUpper(method) {
+	case "POST", "PUT", "DELETE", "PATCH":
+		return true
+	}
+	return false
+}
+
+func confirmAction(cmd *cobra.Command, op *spec.Operation) error {
+	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "%s %s\nProceed? [y/N]: ", strings.ToUpper(op.Method), op.Path)
+	scanner := bufio.NewScanner(cmd.InOrStdin())
+	scanner.Scan()
+	answer := strings.TrimSpace(scanner.Text())
+	if strings.ToLower(answer) != "y" {
+		return fmt.Errorf("aborted")
+	}
+	return nil
 }

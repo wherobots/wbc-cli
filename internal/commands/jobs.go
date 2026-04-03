@@ -74,9 +74,6 @@ func addJobsCustomCommands(root *cobra.Command, cfg config.Config, runtimeSpec *
 	jobsCmd.AddCommand(runner.newCreateCommand())
 	jobsCmd.AddCommand(runner.newLogsCommand())
 	jobsCmd.AddCommand(runner.newListCommand())
-	jobsCmd.AddCommand(runner.newRunningAliasCommand())
-	jobsCmd.AddCommand(runner.newFailedAliasCommand())
-	jobsCmd.AddCommand(runner.newCompletedAliasCommand())
 	if runner.getRunMetrics != nil {
 		jobsCmd.AddCommand(runner.newMetricsCommand())
 	}
@@ -728,84 +725,6 @@ func writeRunListTable(out io.Writer, body []byte) error {
 		}
 	}
 	return tw.Flush()
-}
-
-func (r *jobsRunner) newRunningAliasCommand() *cobra.Command {
-	var (
-		name   string
-		after  string
-		limit  int
-		region string
-		output string
-	)
-
-	cmd := &cobra.Command{
-		Use:           "running",
-		Short:         "Alias for job-runs list --status RUNNING",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return r.executeList(cmd, []string{"RUNNING"}, name, after, limit, region, output)
-		},
-	}
-	cmd.Flags().StringVar(&name, "name", "", "filter by name pattern")
-	cmd.Flags().StringVar(&after, "after", "", "filter runs created after ISO timestamp")
-	cmd.Flags().IntVarP(&limit, "limit", "l", defaultListLimit, "max results")
-	cmd.Flags().StringVar(&region, "region", "", "filter by region")
-	cmd.Flags().StringVar(&output, "output", outputText, "output format: text|json")
-	return cmd
-}
-
-func (r *jobsRunner) newFailedAliasCommand() *cobra.Command {
-	var (
-		name   string
-		after  string
-		limit  int
-		region string
-		output string
-	)
-
-	cmd := &cobra.Command{
-		Use:           "failed",
-		Short:         "Alias for job-runs list --status FAILED",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return r.executeList(cmd, []string{"FAILED"}, name, after, limit, region, output)
-		},
-	}
-	cmd.Flags().StringVar(&name, "name", "", "filter by name pattern")
-	cmd.Flags().StringVar(&after, "after", "", "filter runs created after ISO timestamp")
-	cmd.Flags().IntVarP(&limit, "limit", "l", defaultListLimit, "max results")
-	cmd.Flags().StringVar(&region, "region", "", "filter by region")
-	cmd.Flags().StringVar(&output, "output", outputText, "output format: text|json")
-	return cmd
-}
-
-func (r *jobsRunner) newCompletedAliasCommand() *cobra.Command {
-	var (
-		name   string
-		after  string
-		limit  int
-		region string
-		output string
-	)
-
-	cmd := &cobra.Command{
-		Use:           "completed",
-		Short:         "Alias for job-runs list --status COMPLETED",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return r.executeList(cmd, []string{"COMPLETED"}, name, after, limit, region, output)
-		},
-	}
-	cmd.Flags().StringVar(&name, "name", "", "filter by name pattern")
-	cmd.Flags().StringVar(&after, "after", "", "filter runs created after ISO timestamp")
-	cmd.Flags().IntVarP(&limit, "limit", "l", defaultListLimit, "max results")
-	cmd.Flags().StringVar(&region, "region", "", "filter by region")
-	cmd.Flags().StringVar(&output, "output", outputText, "output format: text|json")
-	return cmd
 }
 
 func (r *jobsRunner) newMetricsCommand() *cobra.Command {

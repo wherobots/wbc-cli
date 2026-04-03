@@ -19,6 +19,7 @@ type Operation struct {
 	PathParamOrder []string
 	QueryParams    []Parameter
 	RequestBody    *RequestBodyInfo
+	Excluded       bool
 }
 
 type Parameter struct {
