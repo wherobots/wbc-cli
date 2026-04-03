@@ -33,8 +33,79 @@ func TestRootTreeOutput(t *testing.T) {
 	}
 
 	got := out.String()
-	if !strings.Contains(got, "wherobots\n") || !strings.Contains(got, "  api\n") || !strings.Contains(got, "    users\n") || !strings.Contains(got, "      get\n") || !strings.Contains(got, "      list\n") {
+	if !strings.Contains(got, "wherobots\n") ||
+		!strings.Contains(got, "  api\n") ||
+		!strings.Contains(got, "    users\n") ||
+		!strings.Contains(got, "      get ") ||
+		!strings.Contains(got, "      list ") {
 		t.Fatalf("tree output missing expected nodes:\n%s", got)
+	}
+}
+
+func TestTreeShowsSummaryOnLeafNodes(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{AppName: "wherobots", HTTPTimeout: time.Second}
+	runtimeSpec := &spec.RuntimeSpec{
+		BaseURL: "https://api.example.com",
+		Operations: []*spec.Operation{
+			{Method: "GET", Path: "/catalogs", Summary: "List all catalogs"},
+			{Method: "POST", Path: "/catalogs", Summary: "Create a catalog"},
+		},
+	}
+
+	root := BuildRootCommand(cfg, runtimeSpec)
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"--tree"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	tree := out.String()
+	if !strings.Contains(tree, "List all catalogs") {
+		t.Errorf("tree should show summary 'List all catalogs':\n%s", tree)
+	}
+	if !strings.Contains(tree, "Create a catalog") {
+		t.Errorf("tree should show summary 'Create a catalog':\n%s", tree)
+	}
+	// Group node (catalogs) should not have a trailing summary
+	if strings.Contains(tree, "catalogs ") {
+		t.Errorf("group node 'catalogs' should not have a summary:\n%s", tree)
+	}
+}
+
+func TestDescriptionAppearsInHelp(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{AppName: "wherobots", HTTPTimeout: time.Second}
+	runtimeSpec := &spec.RuntimeSpec{
+		BaseURL: "https://api.example.com",
+		Operations: []*spec.Operation{
+			{
+				Method:      "GET",
+				Path:        "/catalogs",
+				Summary:     "List all catalogs",
+				Description: "Returns all catalogs accessible to the current user, including managed and foreign catalogs.",
+			},
+		},
+	}
+
+	root := BuildRootCommand(cfg, runtimeSpec)
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"api", "catalogs", "list", "--help"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	help := out.String()
+	if !strings.Contains(help, "Returns all catalogs accessible to the current user") {
+		t.Errorf("help should contain the OpenAPI description:\n%s", help)
 	}
 }
 

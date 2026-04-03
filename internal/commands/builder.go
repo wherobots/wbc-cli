@@ -527,10 +527,14 @@ func reserveFlagName(used map[string]struct{}, preferred, prefix string) string 
 }
 
 func buildOperationHelp(op *spec.Operation, pathBindings, queryBindings []parameterBinding, bodyFlags bodyBinding) string {
-	lines := []string{
+	lines := []string{}
+	if desc := strings.TrimSpace(op.Description); desc != "" {
+		lines = append(lines, desc, "")
+	}
+	lines = append(lines,
 		fmt.Sprintf("Operation: %s %s", op.Method, op.Path),
 		"Use named flags for operation inputs. Object and array values must be JSON strings.",
-	}
+	)
 
 	if len(pathBindings) > 0 {
 		lines = append(lines, "Path flags:")

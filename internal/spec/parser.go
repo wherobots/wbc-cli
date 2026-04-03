@@ -63,6 +63,7 @@ func Parse(rawSpec []byte, openAPIURL string) (*RuntimeSpec, error) {
 				Path:           pathTemplate,
 				OperationID:    op.OperationId,
 				Summary:        op.Summary,
+				Description:    op.Description,
 				PathParams:     pathParams,
 				PathParamOrder: pathParamOrder,
 				QueryParams:    queryParams,
