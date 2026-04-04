@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestLoadDefaultsToWherobotsOpenAPISpec(t *testing.T) {
 	t.Setenv("WHEROBOTS_API_URL", "")
@@ -45,6 +48,29 @@ func TestLoadRequiresWherobotsAPIKey(t *testing.T) {
 	_, err := Load()
 	if err == nil {
 		t.Fatalf("expected Load() error")
+	}
+}
+
+func TestCachePathIsKeyedOnAPIURL(t *testing.T) {
+	t.Setenv("WHEROBOTS_API_KEY", "key-1")
+
+	t.Setenv("WHEROBOTS_API_URL", "https://api.cloud.wherobots.com")
+	cfgProd, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	t.Setenv("WHEROBOTS_API_URL", "https://api.staging.wherobots.com")
+	cfgStaging, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfgProd.CachePath == cfgStaging.CachePath {
+		t.Errorf("different API URLs must produce different cache paths; both got %q", cfgProd.CachePath)
+	}
+	if !strings.Contains(cfgProd.CachePath, "spec-") {
+		t.Errorf("cache path should contain URL key prefix, got %q", cfgProd.CachePath)
 	}
 }
 

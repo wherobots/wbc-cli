@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"hash/fnv"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -51,6 +52,8 @@ func Load() (Config, error) {
 	}
 
 	cacheDir := filepath.Join(cacheRoot, appName)
+	cacheKey := urlCacheKey(openAPIURL)
+
 	ttl, err := parseTTL(os.Getenv(envOpenAPICacheTTL))
 	if err != nil {
 		return Config{}, err
@@ -67,12 +70,20 @@ func Load() (Config, error) {
 		AppName:     appName,
 		OpenAPIURL:  openAPIURL,
 		APIKey:      apiKey,
-		CachePath:   filepath.Join(cacheDir, "spec.json"),
-		CacheMeta:   filepath.Join(cacheDir, "spec.meta.json"),
+		CachePath:   filepath.Join(cacheDir, "spec-"+cacheKey+".json"),
+		CacheMeta:   filepath.Join(cacheDir, "spec-"+cacheKey+".meta.json"),
 		CacheTTL:    ttl,
 		HTTPTimeout: timeout,
 		UploadPath:  uploadPath,
 	}, nil
+}
+
+// urlCacheKey returns a short hex string derived from the URL so that
+// different API endpoints get separate cache files.
+func urlCacheKey(rawURL string) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(rawURL))
+	return fmt.Sprintf("%08x", h.Sum32())
 }
 
 func resolveOpenAPISpecURL(baseURL string) (string, error) {
