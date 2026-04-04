@@ -63,8 +63,19 @@ func operationIDVerb(operationID string) string {
 	if operationID == "" {
 		return ""
 	}
-	operationID = camelBoundary.ReplaceAllString(operationID, `$1-$2`)
-	return normalizeToken(operationID)
+	// Use only the first camelCase word (the action prefix) as the verb.
+	// e.g. "getFeatureFlags" → "get", "listJobRuns" → "list", "cancelRun" → "cancel"
+	// The path hierarchy already provides the resource context; repeating it
+	// in the verb name creates redundant commands like "flags > flags-get".
+	runes := []rune(operationID)
+	end := len(runes)
+	for i := 1; i < len(runes); i++ {
+		if unicode.IsUpper(runes[i]) {
+			end = i
+			break
+		}
+	}
+	return strings.ToLower(string(runes[:end]))
 }
 
 func normalizeToken(input string) string {

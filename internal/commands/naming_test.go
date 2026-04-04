@@ -7,16 +7,26 @@ import (
 	"wherobots/cli/internal/spec"
 )
 
-func TestChooseVerbPrefersOperationID(t *testing.T) {
+func TestChooseVerbUsesFirstWordOfOperationID(t *testing.T) {
 	t.Parallel()
 
-	op := &spec.Operation{
-		Method:      "GET",
-		Path:        "/users",
-		OperationID: "fetchUsers",
+	cases := []struct {
+		operationID string
+		want        string
+	}{
+		{"fetchUsers", "fetch"},
+		{"listJobRuns", "list"},
+		{"getFeatureFlags", "get"},
+		{"cancelRun", "cancel"},
+		{"destroyNotebookInstance", "destroy"},
+		{"setDefaultRegion", "set"},
+		{"undeleteMyOrganization", "undelete"},
 	}
-	if got := ChooseVerb(op); got != "fetch-users" {
-		t.Fatalf("ChooseVerb() = %q, want %q", got, "fetch-users")
+	for _, tc := range cases {
+		op := &spec.Operation{Method: "GET", Path: "/x", OperationID: tc.operationID}
+		if got := ChooseVerb(op); got != tc.want {
+			t.Fatalf("ChooseVerb(%q) = %q, want %q", tc.operationID, got, tc.want)
+		}
 	}
 }
 
