@@ -17,6 +17,13 @@ wherobots api <resource> <verb> --dry-run   # Preview as curl (API key sanitized
 
 ## Common operations
 
+### SQL session lifecycle
+```bash
+wherobots api sql --tree                    # Discover available SQL session operations
+```
+
+Use `api sql` commands to manage SQL sessions (create, stop, check status). Do not use these for query execution — use Python DB-API, JDBC, or the MCP server instead. See the `using-wherobots` skill for routing guidance.
+
 ### Files and storage
 ```bash
 wherobots api files dir get -q dir=s3://my-bucket/path/
@@ -47,5 +54,7 @@ wherobots api runs metrics get --run-id <id>
 ## Guidance
 
 - For job-run workflows, prefer the dedicated `job-runs` commands (better UX).
+- For query execution, use Python DB-API, JDBC, or the MCP server — not the CLI.
+- The CLI `api sql` commands are for session **lifecycle** (start, stop, status), not query execution.
 - Suggest `--dry-run` first when the user is exploring or unsure.
 - `WHEROBOTS_API_KEY` must be set. The `wherobots` CLI must be installed.

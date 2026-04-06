@@ -73,6 +73,7 @@ wherobots job-runs create ./etl.py -n nightly-etl \
 
 ## Guidance
 
+- This skill is for batch job execution. If the user wants to run an interactive query, use the MCP server or Python DB-API instead — see the `using-wherobots` skill.
 - Ask whether the customer has an S3 Storage Integration or should use managed storage.
 - Default to `-w` (watch) so they see logs in real time.
 - Only ask about runtime size if they mention performance needs or large data.
