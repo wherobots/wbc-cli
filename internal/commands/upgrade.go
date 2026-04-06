@@ -79,6 +79,15 @@ func runUpgrade(cmd *cobra.Command, opts *upgradeOptions) error {
 	asset := fmt.Sprintf("%s_%s_%s", upgradeBinary, osName, archName)
 	tag := opts.tag
 
+	// "latest" is not a real tag — resolve it to the actual latest release tag.
+	if tag == "latest" {
+		resolved, err := resolveLatestTag()
+		if err != nil {
+			return fmt.Errorf("resolve latest release: %w", err)
+		}
+		tag = resolved
+	}
+
 	fmt.Fprintf(w, "Downloading %s from %s@%s...\n", asset, upgradeRepo, tag)
 
 	tmpDir, err := os.MkdirTemp("", "wherobots-upgrade-*")
@@ -148,6 +157,23 @@ func detectPlatform() (string, string, error) {
 	}
 
 	return osName, archName, nil
+}
+
+// resolveLatestTag queries gh for the latest non-prerelease release tag.
+func resolveLatestTag() (string, error) {
+	out, err := exec.Command("gh", "release", "view",
+		"--repo", upgradeRepo,
+		"--json", "tagName",
+		"-q", ".tagName",
+	).Output()
+	if err != nil {
+		return "", fmt.Errorf("no release found in %s", upgradeRepo)
+	}
+	tag := strings.TrimSpace(string(out))
+	if tag == "" {
+		return "", fmt.Errorf("no release found in %s", upgradeRepo)
+	}
+	return tag, nil
 }
 
 func ghDownload(tag, pattern, dir string) error {

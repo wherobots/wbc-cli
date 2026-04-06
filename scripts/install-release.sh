@@ -110,6 +110,15 @@ TMP_DIR="$(mktemp -d)"
 cleanup() { rm -rf "$TMP_DIR"; }
 trap cleanup EXIT
 
+# "latest" is not a real tag — resolve it to the actual latest release tag.
+if [[ "$TAG" == "latest" ]]; then
+  TAG="$(gh release view --repo "$REPO" --json tagName -q .tagName 2>/dev/null)" || true
+  if [[ -z "$TAG" ]]; then
+    echo "No release found in $REPO" >&2
+    exit 1
+  fi
+fi
+
 echo "Downloading ${ASSET} from ${REPO}@${TAG}..."
 gh release download "$TAG" --repo "$REPO" --pattern "$ASSET" --dir "$TMP_DIR" --clobber
 
