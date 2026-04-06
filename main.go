@@ -57,6 +57,9 @@ func run(ctx context.Context) error {
 	if result := version.Collect(updateCh); result != nil {
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, version.FormatNotice(result))
+		if execErr != nil {
+			fmt.Fprintln(os.Stderr, "Note: your CLI is out of date. Run `wherobots upgrade` to update — it may resolve this issue.")
+		}
 	}
 
 	return execErr
