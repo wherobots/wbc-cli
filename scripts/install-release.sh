@@ -12,7 +12,7 @@ usage() {
 Install wherobots CLI from a GitHub release.
 
 Requirements:
-  - gh CLI installed and authenticated with access to the repository.
+  - curl
 
 Usage:
   ./scripts/install-release.sh [options]
@@ -67,23 +67,13 @@ while (($# > 0)); do
   esac
 done
 
-if ! command -v gh >/dev/null 2>&1; then
-  echo "gh CLI is required. Install from https://cli.github.com/" >&2
+if ! command -v curl >/dev/null 2>&1; then
+  echo "curl is required." >&2
   exit 1
 fi
 
 if ! command -v install >/dev/null 2>&1; then
   echo "'install' command is required." >&2
-  exit 1
-fi
-
-if ! gh auth status >/dev/null 2>&1; then
-  echo "gh is not authenticated. Run: gh auth login" >&2
-  exit 1
-fi
-
-if ! gh repo view "$REPO" >/dev/null 2>&1; then
-  echo "Unable to access repository $REPO with current gh credentials." >&2
   exit 1
 fi
 
@@ -110,12 +100,27 @@ TMP_DIR="$(mktemp -d)"
 cleanup() { rm -rf "$TMP_DIR"; }
 trap cleanup EXIT
 
+# "latest" is not a real tag — resolve it to the actual latest release tag.
+if [[ "$TAG" == "latest" ]]; then
+  API_RESPONSE="$(curl -fsSL -H "User-Agent: wherobots-cli" \
+    "https://api.github.com/repos/${REPO}/releases/latest" 2>/dev/null)" || true
+  # Parse tag_name from JSON without requiring jq — grep for the field and
+  # strip surrounding quotes/whitespace with sed.
+  TAG="$(printf '%s' "$API_RESPONSE" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')" || true
+  if [[ -z "$TAG" ]]; then
+    echo "No release found in $REPO" >&2
+    exit 1
+  fi
+fi
+
+DOWNLOAD_BASE="https://github.com/${REPO}/releases/download/${TAG}"
+
 echo "Downloading ${ASSET} from ${REPO}@${TAG}..."
-gh release download "$TAG" --repo "$REPO" --pattern "$ASSET" --dir "$TMP_DIR" --clobber
+curl -fsSL -o "$TMP_DIR/$ASSET" "${DOWNLOAD_BASE}/${ASSET}"
 
 if [[ "$SKIP_CHECKSUM" -eq 0 ]]; then
   echo "Verifying checksum..."
-  gh release download "$TAG" --repo "$REPO" --pattern "checksums.txt" --dir "$TMP_DIR" --clobber
+  curl -fsSL -o "$TMP_DIR/checksums.txt" "${DOWNLOAD_BASE}/checksums.txt"
   EXPECTED="$(awk -v file="$ASSET" '$2 == file { print $1 }' "$TMP_DIR/checksums.txt" | head -n1)"
   if [[ -z "$EXPECTED" ]]; then
     echo "Could not find checksum entry for $ASSET" >&2
