@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
@@ -14,14 +15,20 @@ func RenderTree(root *cobra.Command) string {
 }
 
 func renderNode(builder *strings.Builder, cmd *cobra.Command, depth int) {
-	builder.WriteString(strings.Repeat("  ", depth))
-	builder.WriteString(cmd.Name())
-	builder.WriteString("\n")
-
+	indent := strings.Repeat("  ", depth)
 	children := visibleChildren(cmd)
 	slices.SortFunc(children, func(a, b *cobra.Command) int {
 		return strings.Compare(a.Name(), b.Name())
 	})
+
+	// For leaf nodes (verb commands) show the summary; for grouping nodes just the name.
+	short := strings.TrimSpace(cmd.Short)
+	if short != "" && len(children) == 0 {
+		// Align: pad name to a minimum width relative to siblings when possible.
+		fmt.Fprintf(builder, "%s%-20s %s\n", indent, cmd.Name(), short)
+	} else {
+		fmt.Fprintf(builder, "%s%s\n", indent, cmd.Name())
+	}
 
 	for _, child := range children {
 		renderNode(builder, child, depth+1)

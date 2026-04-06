@@ -10,6 +10,7 @@ type GlobalFlags struct {
 	Query    []string
 	DryRun   bool
 	Tree     bool
+	Yes      bool
 }
 
 type QueryPair struct {

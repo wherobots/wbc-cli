@@ -63,10 +63,12 @@ func Parse(rawSpec []byte, openAPIURL string) (*RuntimeSpec, error) {
 				Path:           pathTemplate,
 				OperationID:    op.OperationId,
 				Summary:        op.Summary,
+				Description:    op.Description,
 				PathParams:     pathParams,
 				PathParamOrder: pathParamOrder,
 				QueryParams:    queryParams,
 				RequestBody:    extractRequestBodyInfo(op),
+				Excluded:       isOperationExcluded(op),
 			})
 		}
 	}
@@ -111,6 +113,21 @@ func deriveBaseURL(doc *highv3.Document, openAPIURL string) string {
 	parsedSpecURL.RawQuery = ""
 	parsedSpecURL.Fragment = ""
 	return strings.TrimRight(parsedSpecURL.String(), "/")
+}
+
+func isOperationExcluded(op *highv3.Operation) bool {
+	if op == nil || op.Extensions == nil {
+		return false
+	}
+	for pair := orderedmap.First(op.Extensions); pair != nil; pair = pair.Next() {
+		if pair.Key() == "x-exclude-from-cli" {
+			node := pair.Value()
+			if node != nil && strings.ToLower(strings.TrimSpace(node.Value)) == "true" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func extractPathParamOrder(pathTemplate string) []string {

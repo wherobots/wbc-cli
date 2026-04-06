@@ -13,12 +13,14 @@ type Operation struct {
 	Path           string
 	OperationID    string
 	Summary        string
+	Description    string
 	CommandPath    []string
 	Verb           string
 	PathParams     []Parameter
 	PathParamOrder []string
 	QueryParams    []Parameter
 	RequestBody    *RequestBodyInfo
+	Excluded       bool
 }
 
 type Parameter struct {
