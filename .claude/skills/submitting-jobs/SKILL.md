@@ -7,7 +7,7 @@ description: Submits Wherobots Cloud job runs from local Python files or S3 URIs
 
 ## Storage resolution order
 
-The script must reference an S3 location. Resolve where it lives or will be uploaded in this order:
+Job runs execute from S3. The CLI accepts a local `.py` file or an `s3://` URI — local files are uploaded automatically. Resolve where the script will live in this order:
 
 ### 1. Customer's own S3 via Storage Integration (preferred)
 
