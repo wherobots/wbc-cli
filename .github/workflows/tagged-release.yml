@@ -1,0 +1,56 @@
+name: Tagged Release
+
+on:
+    push:
+        tags:
+            - "v*"
+
+permissions:
+    contents: write
+
+jobs:
+    release:
+        name: Publish tagged release
+        runs-on: depot-ubuntu-24.04-4
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Setup Go
+              uses: actions/setup-go@v5
+              with:
+                  go-version-file: go.mod
+                  cache: true
+
+            - name: Run tests
+              run: go test ./...
+
+            - name: Build release binaries
+              run: |
+                  set -euo pipefail
+                  mkdir -p dist
+                  BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                  VERSION="${GITHUB_REF_NAME#v}"
+                  for GOOS in darwin linux windows; do
+                    for GOARCH in amd64 arm64; do
+                      OUT="dist/wherobots_${GOOS}_${GOARCH}"
+                      if [ "${GOOS}" = "windows" ]; then
+                        OUT="${OUT}.exe"
+                      fi
+                      echo "Building ${OUT}"
+                      GOOS="${GOOS}" GOARCH="${GOARCH}" CGO_ENABLED=0 \
+                        go build -ldflags "-s -w -X main.buildVersion=${VERSION} -X main.commit=${GITHUB_SHA} -X main.date=${BUILD_DATE}" -o "${OUT}" .
+                    done
+                  done
+                  (cd dist && sha256sum * > checksums.txt)
+
+            - name: Create GitHub release
+              run: |
+                  set -euo pipefail
+                  gh release create "${GITHUB_REF_NAME}" dist/* \
+                    --title "Release ${GITHUB_REF_NAME}" \
+                    --generate-notes
+              env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

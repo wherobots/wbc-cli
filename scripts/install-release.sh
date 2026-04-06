@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO="${WHEROBOTS_CLI_REPO:-wherobots/wbc-cli}"
-TAG="${WHEROBOTS_CLI_TAG:-latest-prerelease}"
+TAG="${WHEROBOTS_CLI_TAG:-latest}"
 BINARY_NAME="${WHEROBOTS_CLI_BINARY:-wherobots}"
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/.local/bin}"
 SKIP_CHECKSUM=0
@@ -19,7 +19,7 @@ Usage:
 
 Options:
   --repo <owner/name>      GitHub repository (default: wherobots/wbc-cli)
-  --tag <tag>              Release tag (default: latest-prerelease)
+  --tag <tag>              Release tag (default: latest)
   --install-dir <path>     Install directory (default: ~/.local/bin)
   --binary-name <name>     Binary name/asset prefix (default: wherobots)
   --skip-checksum          Skip checksum verification

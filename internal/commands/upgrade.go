@@ -16,7 +16,7 @@ import (
 
 const (
 	upgradeRepo       = "wherobots/wbc-cli"
-	upgradeDefaultTag = "latest-prerelease"
+	upgradeDefaultTag = "latest"
 	upgradeBinary     = "wherobots"
 )
 
