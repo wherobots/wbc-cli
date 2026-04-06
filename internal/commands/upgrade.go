@@ -3,8 +3,10 @@ package commands
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -66,11 +68,6 @@ func runUpgrade(cmd *cobra.Command, opts *upgradeOptions) error {
 		installDir = filepath.Dir(exe)
 	}
 
-	// Ensure gh is available and authenticated.
-	if err := requireGh(); err != nil {
-		return err
-	}
-
 	osName, archName, err := detectPlatform()
 	if err != nil {
 		return err
@@ -96,7 +93,7 @@ func runUpgrade(cmd *cobra.Command, opts *upgradeOptions) error {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	if err := ghDownload(tag, asset, tmpDir); err != nil {
+	if err := httpDownload(tag, asset, tmpDir); err != nil {
 		return fmt.Errorf("download asset: %w", err)
 	}
 
@@ -104,7 +101,7 @@ func runUpgrade(cmd *cobra.Command, opts *upgradeOptions) error {
 
 	if !opts.skipChecksum {
 		fmt.Fprintln(w, "Verifying checksum...")
-		if err := ghDownload(tag, "checksums.txt", tmpDir); err != nil {
+		if err := httpDownload(tag, "checksums.txt", tmpDir); err != nil {
 			return fmt.Errorf("download checksums: %w", err)
 		}
 		if err := verifyChecksum(assetPath, filepath.Join(tmpDir, "checksums.txt"), asset); err != nil {
@@ -119,17 +116,6 @@ func runUpgrade(cmd *cobra.Command, opts *upgradeOptions) error {
 	}
 
 	fmt.Fprintf(w, "Installed: %s\n", target)
-	return nil
-}
-
-// requireGh checks that the gh CLI is installed and authenticated.
-func requireGh() error {
-	if _, err := exec.LookPath("gh"); err != nil {
-		return fmt.Errorf("gh CLI is required; install from https://cli.github.com/")
-	}
-	if err := exec.Command("gh", "auth", "status").Run(); err != nil {
-		return fmt.Errorf("gh is not authenticated; run: gh auth login")
-	}
 	return nil
 }
 
@@ -159,32 +145,66 @@ func detectPlatform() (string, string, error) {
 	return osName, archName, nil
 }
 
-// resolveLatestTag queries gh for the latest non-prerelease release tag.
+// resolveLatestTag queries the GitHub API for the latest release tag.
 func resolveLatestTag() (string, error) {
-	out, err := exec.Command("gh", "release", "view",
-		"--repo", upgradeRepo,
-		"--json", "tagName",
-		"-q", ".tagName",
-	).Output()
+	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", upgradeRepo)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return "", fmt.Errorf("no release found in %s", upgradeRepo)
+		return "", err
 	}
-	tag := strings.TrimSpace(string(out))
+	req.Header.Set("User-Agent", "wherobots-cli")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("GitHub API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("no release found in %s (HTTP %d)", upgradeRepo, resp.StatusCode)
+	}
+
+	var release struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return "", fmt.Errorf("failed to parse GitHub API response: %w", err)
+	}
+	tag := strings.TrimSpace(release.TagName)
 	if tag == "" {
 		return "", fmt.Errorf("no release found in %s", upgradeRepo)
 	}
 	return tag, nil
 }
 
-func ghDownload(tag, pattern, dir string) error {
-	out, err := exec.Command("gh", "release", "download", tag,
-		"--repo", upgradeRepo,
-		"--pattern", pattern,
-		"--dir", dir,
-		"--clobber",
-	).CombinedOutput()
+// httpDownload downloads a release asset from GitHub to the given directory.
+func httpDownload(tag, filename, dir string) error {
+	url := fmt.Sprintf("https://github.com/%s/releases/download/%s/%s", upgradeRepo, tag, filename)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return fmt.Errorf("%s: %s", err, strings.TrimSpace(string(out)))
+		return err
+	}
+	req.Header.Set("User-Agent", "wherobots-cli")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("download request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to download %s (HTTP %d)", filename, resp.StatusCode)
+	}
+
+	outPath := filepath.Join(dir, filename)
+	f, err := os.Create(outPath)
+	if err != nil {
+		return fmt.Errorf("create file %s: %w", outPath, err)
+	}
+	defer f.Close()
+
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		return fmt.Errorf("write file %s: %w", outPath, err)
 	}
 	return nil
 }

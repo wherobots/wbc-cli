@@ -3,8 +3,9 @@ package version
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"os/exec"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -23,7 +24,7 @@ type Result struct {
 	Outdated bool   // true when current < latest
 }
 
-// CheckInBackground spawns a goroutine that queries the GitHub CLI for the
+// CheckInBackground spawns a goroutine that queries the GitHub API for the
 // latest release tag. Call Collect on the returned channel after the main
 // command has finished to retrieve the result (if any).
 //
@@ -46,7 +47,7 @@ func CheckInBackground(ctx context.Context, currentVersion string) <-chan *Resul
 
 		latest, err := fetchLatestTag(checkCtx)
 		if err != nil || latest == "" {
-			return // silently skip; don't annoy users when gh is unavailable
+			return // silently skip; don't annoy users when the check fails
 		}
 
 		if !isNewer(currentVersion, latest) {
@@ -91,18 +92,32 @@ func isDevVersion(v string) bool {
 	return v == "" || v == "dev" || v == "latest-prerelease" || strings.HasPrefix(v, "dev-")
 }
 
-// fetchLatestTag shells out to: gh release view --repo wherobots/wbc-cli --json tagName -q .tagName
+// fetchLatestTag queries the GitHub API for the latest release tag.
 func fetchLatestTag(ctx context.Context) (string, error) {
-	cmd := exec.CommandContext(ctx, "gh", "release", "view",
-		"--repo", repo,
-		"--json", "tagName",
-		"-q", ".tagName",
-	)
-	out, err := cmd.Output()
+	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(string(out)), nil
+	req.Header.Set("User-Agent", "wherobots-cli")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GitHub API returned status %d", resp.StatusCode)
+	}
+
+	var release struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(release.TagName), nil
 }
 
 // isNewer returns true when latest represents a strictly newer semver than current.
