@@ -41,29 +41,45 @@ func TestLoadBuildsSpecURLFromWherobotsAPIURL(t *testing.T) {
 	}
 }
 
-func TestLoadRequiresWherobotsAPIKey(t *testing.T) {
+func TestLoadSucceedsWithoutAPIKey(t *testing.T) {
 	t.Setenv("WHEROBOTS_API_URL", "")
 	t.Setenv("WHEROBOTS_API_KEY", "")
 
-	_, err := Load()
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.APIKey != "" {
+		t.Fatalf("APIKey = %q, want empty", cfg.APIKey)
+	}
+}
+
+func TestRequireAPIKeyErrorsWithDefaultURL(t *testing.T) {
+	cfg := Config{OpenAPIURL: "https://api.cloud.wherobots.com/openapi.json"}
+	err := cfg.RequireAPIKey()
 	if err == nil {
-		t.Fatalf("expected Load() error")
+		t.Fatalf("expected error")
 	}
 	if !strings.Contains(err.Error(), "https://cloud.wherobots.com/settings#api-keys") {
 		t.Fatalf("error should contain default API key URL, got: %v", err)
 	}
 }
 
-func TestLoadMissingKeyUsesCustomAPIHost(t *testing.T) {
-	t.Setenv("WHEROBOTS_API_URL", "https://api.staging.wherobots.com")
-	t.Setenv("WHEROBOTS_API_KEY", "")
-
-	_, err := Load()
+func TestRequireAPIKeyErrorsWithCustomURL(t *testing.T) {
+	cfg := Config{OpenAPIURL: "https://api.staging.wherobots.com/openapi.json"}
+	err := cfg.RequireAPIKey()
 	if err == nil {
-		t.Fatalf("expected Load() error")
+		t.Fatalf("expected error")
 	}
 	if !strings.Contains(err.Error(), "https://staging.wherobots.com/settings#api-keys") {
 		t.Fatalf("error should contain custom API key URL, got: %v", err)
+	}
+}
+
+func TestRequireAPIKeySucceedsWithKey(t *testing.T) {
+	cfg := Config{APIKey: "key-1"}
+	if err := cfg.RequireAPIKey(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
