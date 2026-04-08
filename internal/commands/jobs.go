@@ -903,7 +903,8 @@ func (r *jobsRunner) followLogs(cmd *cobra.Command, runID string, intervalSec fl
 		if err != nil {
 			return false, err
 		}
-		for _, line := range extractLogLines(respBody) {
+		lines := extractLogLines(respBody)
+		for _, line := range lines {
 			if _, err := fmt.Fprintln(cmd.OutOrStdout(), line); err != nil {
 				return false, err
 			}
@@ -915,6 +916,8 @@ func (r *jobsRunner) followLogs(cmd *cobra.Command, runID string, intervalSec fl
 			if next != cursor {
 				cursor = next
 			}
+		} else {
+			cursor += len(lines)
 		}
 
 		runBody, err := r.execWithRetry(cmd.Context(), r.getRun, []string{runID}, nil, "")
