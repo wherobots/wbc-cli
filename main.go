@@ -50,7 +50,6 @@ func run(ctx context.Context) error {
 	root.Version = versionString
 	root.Short = fmt.Sprintf("Wherobots CLI %s", buildVersion)
 	commands.AddUpgradeCommand(root, buildVersion)
-	commands.AddVersionCommand(root, versionString)
 	execErr := root.ExecuteContext(ctx)
 
 	// After the command finishes, print an update notice if one is available.
