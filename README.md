@@ -6,23 +6,25 @@ A command-line interface for the [Wherobots](https://wherobots.com) Cloud API. S
 
 - A Wherobots Cloud account and API key
 - **Go 1.25.7+** (only if building from source)
-- **`gh` CLI** (only if installing from a pre-built release)
 
 ## Installation
 
-### From a pre-built release
-
-If you have access to the `wherobots/wbc-cli` repository, use the installer script. This requires the [GitHub CLI](https://cli.github.com) (`gh`) with `gh auth login` completed.
+### Quick install (curl | bash)
 
 ```bash
-./scripts/install-release.sh
+curl -fsSL https://raw.githubusercontent.com/wherobots/wbc-cli/main/scripts/install-release.sh | bash
 ```
 
-The script:
-- Detects your OS and architecture automatically.
-- Downloads and verifies the SHA-256 checksum of the binary.
-- Installs to `~/.local/bin/wherobots` by default (override with `--install-dir`).
-- Defaults to the `latest-prerelease` release tag.
+This downloads the latest release binary for your OS/arch, verifies its SHA-256 checksum, and installs it to `~/.local/bin/wherobots`.
+
+To pass options (e.g. a custom install directory or release tag), use `bash -s --`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wherobots/wbc-cli/main/scripts/install-release.sh \
+  | bash -s -- --install-dir /usr/local/bin --tag latest-prerelease
+```
+
+Available flags: `--install-dir`, `--tag`, `--repo`, `--binary-name`, `--skip-checksum`.
 
 ### Build from source
 
@@ -244,3 +246,4 @@ make run ARGS='--tree'   # run without building
 
 - PR validation runs `go test` and `go build` automatically via GitHub Actions.
 - Merges to `main` publish a rolling `latest-prerelease` release with binaries for Linux, macOS, and Windows (amd64 and arm64).
+- To cut a stable `vX.Y.Z` release, see [RELEASE.md](./RELEASE.md).
