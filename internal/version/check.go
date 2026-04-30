@@ -67,10 +67,17 @@ func CheckInBackground(ctx context.Context, currentVersion string) <-chan *Resul
 // Collect waits briefly for the background check result. Returns nil if no
 // update is available, the check was skipped, or the timeout elapsed.
 func Collect(ch <-chan *Result) *Result {
+	return TryCollect(ch, collectTimeout)
+}
+
+// TryCollect waits up to timeout for a result. Returns nil on timeout (the
+// caller may try again later) or when the channel was closed without a
+// result.
+func TryCollect(ch <-chan *Result, timeout time.Duration) *Result {
 	select {
 	case r := <-ch:
 		return r
-	case <-time.After(collectTimeout):
+	case <-time.After(timeout):
 		return nil
 	}
 }
@@ -78,7 +85,7 @@ func Collect(ch <-chan *Result) *Result {
 // FormatNotice returns the human-readable update message to display.
 func FormatNotice(r *Result) string {
 	return fmt.Sprintf(
-		"A newer version of the Wherobots CLI is available: %s (current: %s).\nRun `wherobots upgrade` to update.",
+		"[!] A newer version of the Wherobots CLI is available: %s (current: %s).\n    Run `wherobots upgrade` to update.",
 		r.Latest, r.Current,
 	)
 }

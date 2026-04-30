@@ -2,7 +2,45 @@ package version
 
 import (
 	"testing"
+	"time"
 )
+
+func TestTryCollect_ReturnsResult(t *testing.T) {
+	ch := make(chan *Result, 1)
+	want := &Result{Current: "1.0.0", Latest: "1.0.1", Outdated: true}
+	ch <- want
+	close(ch)
+
+	got := TryCollect(ch, 50*time.Millisecond)
+	if got != want {
+		t.Fatalf("TryCollect returned %+v, want %+v", got, want)
+	}
+}
+
+func TestTryCollect_TimeoutLeavesChannelReadable(t *testing.T) {
+	ch := make(chan *Result, 1)
+
+	if got := TryCollect(ch, 10*time.Millisecond); got != nil {
+		t.Fatalf("TryCollect should time out and return nil, got %+v", got)
+	}
+
+	want := &Result{Current: "1.0.0", Latest: "1.0.1", Outdated: true}
+	ch <- want
+	close(ch)
+
+	if got := TryCollect(ch, 50*time.Millisecond); got != want {
+		t.Fatalf("second TryCollect returned %+v, want %+v", got, want)
+	}
+}
+
+func TestTryCollect_ClosedChannel(t *testing.T) {
+	ch := make(chan *Result)
+	close(ch)
+
+	if got := TryCollect(ch, 50*time.Millisecond); got != nil {
+		t.Fatalf("TryCollect on closed channel should return nil, got %+v", got)
+	}
+}
 
 func TestParseSemver(t *testing.T) {
 	tests := []struct {
