@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"time"
 
 	"wherobots/cli/internal/commands"
 	"wherobots/cli/internal/config"
@@ -18,12 +17,6 @@ var (
 	commit       = "none"
 	date         = "unknown"
 )
-
-// startNoticeWait is how long we wait for the background update check to
-// finish before executing the user's command. Spec loading typically gives
-// the check enough time to return; if not, we fall back to printing at the
-// end so we never block the command on a slow network probe.
-const startNoticeWait = 500 * time.Millisecond
 
 func main() {
 	if err := run(context.Background()); err != nil {
@@ -64,28 +57,16 @@ func run(ctx context.Context) error {
 	// nag about the very version that just got installed.
 	suppressNotice := commands.IsUpgradeInvocation(root, os.Args[1:])
 
-	noticeShown := false
-	if !suppressNotice {
-		if result := version.TryCollect(updateCh, startNoticeWait); result != nil {
-			printUpdateNotice(os.Stderr, result)
-			noticeShown = true
-		}
-	}
-
 	execErr := root.ExecuteContext(ctx)
 
-	// Fallback: if the check hadn't returned by the time we started executing,
-	// print the notice at the end rather than dropping it.
-	if !suppressNotice && !noticeShown {
+	if !suppressNotice {
 		if result := version.Collect(updateCh); result != nil {
 			fmt.Fprintln(os.Stderr, "")
 			printUpdateNotice(os.Stderr, result)
-			noticeShown = true
+			if execErr != nil {
+				fmt.Fprintln(os.Stderr, "Note: your CLI is out of date. Run `wherobots upgrade` to update — it may resolve this issue.")
+			}
 		}
-	}
-
-	if execErr != nil && noticeShown {
-		fmt.Fprintln(os.Stderr, "Note: your CLI is out of date. Run `wherobots upgrade` to update — it may resolve this issue.")
 	}
 
 	return execErr
@@ -97,7 +78,6 @@ func printUpdateNotice(w io.Writer, r *version.Result) {
 		notice = "\033[1;33m" + notice + "\033[0m"
 	}
 	fmt.Fprintln(w, notice)
-	fmt.Fprintln(w, "")
 }
 
 // isTTY reports whether w is an *os.File pointing at a terminal. Stdlib only;

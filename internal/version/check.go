@@ -67,17 +67,10 @@ func CheckInBackground(ctx context.Context, currentVersion string) <-chan *Resul
 // Collect waits briefly for the background check result. Returns nil if no
 // update is available, the check was skipped, or the timeout elapsed.
 func Collect(ch <-chan *Result) *Result {
-	return TryCollect(ch, collectTimeout)
-}
-
-// TryCollect waits up to timeout for a result. Returns nil on timeout (the
-// caller may try again later) or when the channel was closed without a
-// result.
-func TryCollect(ch <-chan *Result, timeout time.Duration) *Result {
 	select {
 	case r := <-ch:
 		return r
-	case <-time.After(timeout):
+	case <-time.After(collectTimeout):
 		return nil
 	}
 }
