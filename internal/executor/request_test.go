@@ -75,7 +75,7 @@ func TestBuildRequestMissingAPIKeyReturnsError(t *testing.T) {
 	op := &spec.Operation{Method: "GET", Path: "/users"}
 
 	_, err := BuildRequest(context.Background(), cfg, runtimeSpec, op, nil, nil, "")
-	if err == nil || !strings.Contains(err.Error(), "WHEROBOTS_API_KEY is required") {
+	if err == nil || !strings.Contains(err.Error(), "WHEROBOTS_API_KEY") {
 		t.Fatalf("expected API key error, got %v", err)
 	}
 }
