@@ -7,7 +7,37 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/spf13/cobra"
 )
+
+func TestIsUpgradeInvocation(t *testing.T) {
+	root := &cobra.Command{Use: "wherobots"}
+	other := &cobra.Command{Use: "list", Run: func(*cobra.Command, []string) {}}
+	root.AddCommand(other)
+	AddUpgradeCommand(root, "1.0.0")
+
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"upgrade alone", []string{"upgrade"}, true},
+		{"upgrade with flag", []string{"upgrade", "--tag", "v1.0.1"}, true},
+		{"other command", []string{"list"}, false},
+		{"no args", []string{}, false},
+		{"unknown command", []string{"nope"}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsUpgradeInvocation(root, tt.args)
+			if got != tt.want {
+				t.Fatalf("IsUpgradeInvocation(%v) = %v, want %v", tt.args, got, tt.want)
+			}
+		})
+	}
+}
 
 func TestDetectPlatform(t *testing.T) {
 	osName, archName, err := detectPlatform()

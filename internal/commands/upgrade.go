@@ -29,6 +29,17 @@ type upgradeOptions struct {
 	currentVersion string
 }
 
+// IsUpgradeInvocation reports whether the given args resolve to the
+// "upgrade" command. Used by main to suppress the update-available notice
+// when the user is already upgrading.
+func IsUpgradeInvocation(root *cobra.Command, args []string) bool {
+	cmd, _, err := root.Find(args)
+	if err != nil || cmd == nil {
+		return false
+	}
+	return cmd.Name() == "upgrade"
+}
+
 // AddUpgradeCommand registers the "upgrade" subcommand on the root command.
 // It requires the current build version to display during the upgrade flow.
 func AddUpgradeCommand(root *cobra.Command, currentVersion string) {

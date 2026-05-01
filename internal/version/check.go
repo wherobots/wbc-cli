@@ -78,7 +78,7 @@ func Collect(ch <-chan *Result) *Result {
 // FormatNotice returns the human-readable update message to display.
 func FormatNotice(r *Result) string {
 	return fmt.Sprintf(
-		"A newer version of the Wherobots CLI is available: %s (current: %s).\nRun `wherobots upgrade` to update.",
+		"[!] A newer version of the Wherobots CLI is available: %s (current: %s).\n    Run `wherobots upgrade` to update.",
 		r.Latest, r.Current,
 	)
 }

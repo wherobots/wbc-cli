@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 
 	"wherobots/cli/internal/commands"
@@ -50,16 +51,45 @@ func run(ctx context.Context) error {
 	root.Version = versionString
 	root.Short = fmt.Sprintf("Wherobots CLI %s", buildVersion)
 	commands.AddUpgradeCommand(root, buildVersion)
+
+	// Suppress the "update available" notice when the user is already running
+	// `upgrade` — the check races with the upgrade itself and would otherwise
+	// nag about the very version that just got installed.
+	suppressNotice := commands.IsUpgradeInvocation(root, os.Args[1:])
+
 	execErr := root.ExecuteContext(ctx)
 
-	// After the command finishes, print an update notice if one is available.
-	if result := version.Collect(updateCh); result != nil {
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, version.FormatNotice(result))
-		if execErr != nil {
-			fmt.Fprintln(os.Stderr, "Note: your CLI is out of date. Run `wherobots upgrade` to update — it may resolve this issue.")
+	if !suppressNotice {
+		if result := version.Collect(updateCh); result != nil {
+			fmt.Fprintln(os.Stderr, "")
+			printUpdateNotice(os.Stderr, result)
+			if execErr != nil {
+				fmt.Fprintln(os.Stderr, "Note: your CLI is out of date. Run `wherobots upgrade` to update — it may resolve this issue.")
+			}
 		}
 	}
 
 	return execErr
+}
+
+func printUpdateNotice(w io.Writer, r *version.Result) {
+	notice := version.FormatNotice(r)
+	if isTTY(w) {
+		notice = "\033[1;33m" + notice + "\033[0m"
+	}
+	fmt.Fprintln(w, notice)
+}
+
+// isTTY reports whether w is an *os.File pointing at a terminal. Stdlib only;
+// avoids pulling in a tty-detection dependency for a single notice.
+func isTTY(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
 }
