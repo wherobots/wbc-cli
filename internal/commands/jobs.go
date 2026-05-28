@@ -25,7 +25,6 @@ import (
 )
 
 const (
-	defaultRunRegion   = "aws-us-west-2"
 	defaultRunTimeout  = 3600
 	defaultListLimit   = 20
 	defaultLogsPollSec = 2.0
@@ -48,6 +47,7 @@ type jobsRunner struct {
 	createUploadURL *spec.Operation
 	getDirectory    *spec.Operation
 	getIntegration  *spec.Operation
+	getConfigHint   *spec.Operation
 	getMe           *spec.Operation
 	getOrganization *spec.Operation
 	getRun          *spec.Operation
@@ -94,6 +94,7 @@ func newJobsRunner(cfg config.Config, runtimeSpec *spec.RuntimeSpec, client *htt
 		createUploadURL: findOperation(runtimeSpec, "POST", "/files/upload-url"),
 		getDirectory:    findOperation(runtimeSpec, "GET", "/files/dir"),
 		getIntegration:  findOperation(runtimeSpec, "GET", "/files/integration-dir"),
+		getConfigHint:   findOperation(runtimeSpec, "GET", "/notebooks/config-hint"),
 		getMe:           findOperation(runtimeSpec, "GET", "/users/me"),
 		getOrganization: findOperation(runtimeSpec, "GET", "/organization"),
 		getRun:          findOperation(runtimeSpec, "GET", "/runs/{run_id}"),
@@ -170,7 +171,14 @@ func (r *jobsRunner) newCreateCommand() *cobra.Command {
 				return fmt.Errorf("encode run payload: %w", err)
 			}
 
-			respBody, err := r.execOnce(cmd.Context(), r.createRun, nil, []executor.QueryPair{{Key: "region", Value: runRegion}}, string(payloadJSON))
+			// Only send region when set; an omitted region lets the API apply
+			// the organization's configured default.
+			var query []executor.QueryPair
+			if strings.TrimSpace(runRegion) != "" {
+				query = append(query, executor.QueryPair{Key: "region", Value: runRegion})
+			}
+
+			respBody, err := r.execOnce(cmd.Context(), r.createRun, nil, query, string(payloadJSON))
 			if err != nil {
 				return err
 			}
@@ -223,8 +231,10 @@ func (r *jobsRunner) newCreateCommand() *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&name, "name", "n", "", "job name (required)")
-	cmd.Flags().StringVarP(&runtimeID, "runtime", "r", "tiny", "compute runtime size")
-	cmd.Flags().StringVar(&runRegion, "run-region", defaultRunRegion, "region for this run")
+	cmd.Flags().StringVarP(&runtimeID, "runtime", "r", "", "compute runtime size; accepts any runtime string. Leave unset to use your organization's default runtime")
+	cmd.Flags().StringVar(&runRegion, "run-region", "", "region for this run; accepts any region string (BYOC regions included). Leave unset to use your organization's default region")
+	_ = cmd.RegisterFlagCompletionFunc("runtime", r.completeRuntimes)
+	_ = cmd.RegisterFlagCompletionFunc("run-region", r.completeRegions)
 	cmd.Flags().IntVar(&timeoutSec, "timeout", defaultRunTimeout, "job timeout in seconds")
 	cmd.Flags().StringVar(&argsRaw, "args", "", "space-separated args for the script")
 	cmd.Flags().StringArrayVarP(&sparkConfigs, "spark-config", "c", nil, "spark config as key=value, repeatable")
@@ -259,9 +269,13 @@ func buildRunPayload(script, name, runtimeID string, timeoutSec int, argsRaw str
 	}
 
 	payload := map[string]any{
-		"runtime":        runtimeID,
 		"name":           name,
 		"timeoutSeconds": timeoutSec,
+	}
+	// Only send runtime when set; an omitted runtime lets the API apply the
+	// organization's configured default.
+	if strings.TrimSpace(runtimeID) != "" {
+		payload["runtime"] = runtimeID
 	}
 
 	if isJar {
@@ -967,6 +981,50 @@ func (r *jobsRunner) followLogs(cmd *cobra.Command, runID string, intervalSec fl
 			return true, nil
 		}
 	}
+}
+
+// completeRuntimes and completeRegions provide shell completion for the
+// --runtime and --run-region flags, sourced from the organization's available
+// runtimes/regions via GET /notebooks/config-hint. They fail open (no
+// suggestions) so completion never blocks or errors out.
+func (r *jobsRunner) completeRuntimes(cmd *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	return r.completeConfigHint(cmd, "runtimes.hint", "id"), cobra.ShellCompDirectiveNoFileComp
+}
+
+func (r *jobsRunner) completeRegions(cmd *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	return r.completeConfigHint(cmd, "regions.hint", "regionName"), cobra.ShellCompDirectiveNoFileComp
+}
+
+// completeConfigHint fetches the config hint and returns the value of valueKey
+// for each enabled item under arrayPath (e.g. "runtimes.hint" / "id").
+func (r *jobsRunner) completeConfigHint(cmd *cobra.Command, arrayPath, valueKey string) []string {
+	if r.getConfigHint == nil {
+		return nil
+	}
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	body, err := r.execOnce(ctx, r.getConfigHint, nil, nil, "")
+	if err != nil {
+		return nil
+	}
+
+	var values []string
+	gjson.GetBytes(body, arrayPath).ForEach(func(_, item gjson.Result) bool {
+		// Skip items the org cannot use; be lenient when "enabled" is absent.
+		if item.Get("enabled").Exists() && !item.Get("enabled").Bool() {
+			return true
+		}
+		if v := strings.TrimSpace(item.Get(valueKey).String()); v != "" {
+			values = append(values, v)
+		}
+		return true
+	})
+	return values
 }
 
 func (r *jobsRunner) execOnce(ctx context.Context, op *spec.Operation, pathArgs []string, query []executor.QueryPair, body string) ([]byte, error) {

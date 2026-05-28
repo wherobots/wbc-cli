@@ -89,8 +89,8 @@ wherobots job-runs create ./script.py --name my-job-001 --upload-path s3://my-bu
 | Flag | Description | Default |
 |------|-------------|---------|
 | `-n, --name` | **Required.** Name for the job run. | — |
-| `-r, --runtime` | Wherobots runtime size. | `tiny` |
-| `--run-region` | Region to run the job in. | `aws-us-west-2` |
+| `-r, --runtime` | Wherobots runtime size; accepts any runtime string. Leave unset to use your organization's default. Shell completion lists your available runtimes. | _(org default)_ |
+| `--run-region` | Region to run the job in; accepts any region string (BYOC regions included). Leave unset to use your organization's default. Shell completion lists your available regions. | _(org default)_ |
 | `--timeout` | Run timeout in seconds. | `3600` |
 | `--args` | Arguments passed to the script. | — |
 | `-c, --spark-config` | Repeatable Spark config key=value pairs. | — |
