@@ -851,6 +851,84 @@ func TestBuildRunPayloadRejectsBadDependency(t *testing.T) {
 	}
 }
 
+func TestCompleteRegionsReturnsAllowedRegions(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/organization" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"allowedRegions":["aws-us-west-2","aws-eu-west-1","byoc-acme-us-east-1"]}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	runner := newJobsRunnerForTest(server.URL)
+	cmd := &cobra.Command{}
+	got, _ := runner.completeRegions(cmd, nil, "")
+	want := []string{"aws-us-west-2", "aws-eu-west-1", "byoc-acme-us-east-1"}
+	if !equalStrings(got, want) {
+		t.Fatalf("completeRegions = %v, want %v", got, want)
+	}
+}
+
+func TestCompleteRegionsFailsOpenOnError(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	runner := newJobsRunnerForTest(server.URL)
+	cmd := &cobra.Command{}
+	got, _ := runner.completeRegions(cmd, nil, "")
+	if got != nil {
+		t.Fatalf("expected nil on error (fail open), got %v", got)
+	}
+}
+
+func TestCompleteRuntimesSkipsDisabled(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/notebooks/config-hint" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"runtimes":{"hint":[{"id":"tiny","enabled":true},{"id":"small"},{"id":"x-large","enabled":false}]}}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	runner := newJobsRunnerForTest(server.URL)
+	cmd := &cobra.Command{}
+	got, _ := runner.completeRuntimes(cmd, nil, "")
+	want := []string{"tiny", "small"}
+	if !equalStrings(got, want) {
+		t.Fatalf("completeRuntimes = %v, want %v", got, want)
+	}
+}
+
+func newJobsRunnerForTest(baseURL string) *jobsRunner {
+	cfg := config.Config{AppName: "wherobots", APIKey: "test-key", HTTPTimeout: time.Second}
+	runner, _ := newJobsRunner(cfg, jobsTestRuntimeSpec(baseURL), http.DefaultClient)
+	return runner
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func buildJobsTestRoot(baseURL string) *cobra.Command {
 	return buildJobsTestRootWithConfig(baseURL, nil)
 }
@@ -864,7 +942,11 @@ func buildJobsTestRootWithConfig(baseURL string, mutate func(*config.Config)) *c
 	if mutate != nil {
 		mutate(&cfg)
 	}
-	runtime := &spec.RuntimeSpec{
+	return BuildRootCommand(cfg, jobsTestRuntimeSpec(baseURL))
+}
+
+func jobsTestRuntimeSpec(baseURL string) *spec.RuntimeSpec {
+	return &spec.RuntimeSpec{
 		BaseURL: baseURL,
 		Operations: []*spec.Operation{
 			{
@@ -892,6 +974,10 @@ func buildJobsTestRootWithConfig(baseURL string, mutate func(*config.Config)) *c
 				QueryParams: []spec.Parameter{
 					{Name: "key", Location: "query", Required: true, Type: "string"},
 				},
+			},
+			{
+				Method: "GET",
+				Path:   "/notebooks/config-hint",
 			},
 			{
 				Method: "POST",
@@ -926,7 +1012,6 @@ func buildJobsTestRootWithConfig(baseURL string, mutate func(*config.Config)) *c
 			},
 		},
 	}
-	return BuildRootCommand(cfg, runtime)
 }
 
 func serverURLFromRequest(r *http.Request) string {
