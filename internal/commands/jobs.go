@@ -984,47 +984,56 @@ func (r *jobsRunner) followLogs(cmd *cobra.Command, runID string, intervalSec fl
 }
 
 // completeRuntimes and completeRegions provide shell completion for the
-// --runtime and --run-region flags, sourced from the organization's available
-// runtimes/regions via GET /notebooks/config-hint. They fail open (no
-// suggestions) so completion never blocks or errors out.
+// --runtime and --run-region flags. Both fail open (no suggestions) so
+// completion never blocks or errors out.
 func (r *jobsRunner) completeRuntimes(cmd *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
-	return r.completeConfigHint(cmd, "runtimes.hint", "id"), cobra.ShellCompDirectiveNoFileComp
+	if r.getConfigHint == nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	body, err := r.fetchForCompletion(cmd, r.getConfigHint)
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	var values []string
+	gjson.GetBytes(body, "runtimes.hint").ForEach(func(_, item gjson.Result) bool {
+		// Skip runtimes the org cannot use; be lenient when "enabled" is absent.
+		if item.Get("enabled").Exists() && !item.Get("enabled").Bool() {
+			return true
+		}
+		if v := strings.TrimSpace(item.Get("id").String()); v != "" {
+			values = append(values, v)
+		}
+		return true
+	})
+	return values, cobra.ShellCompDirectiveNoFileComp
 }
 
 func (r *jobsRunner) completeRegions(cmd *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
-	return r.completeConfigHint(cmd, "regions.hint", "regionName"), cobra.ShellCompDirectiveNoFileComp
+	if r.getOrganization == nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	body, err := r.fetchForCompletion(cmd, r.getOrganization)
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	var values []string
+	gjson.GetBytes(body, "allowedRegions").ForEach(func(_, item gjson.Result) bool {
+		if v := strings.TrimSpace(item.String()); v != "" {
+			values = append(values, v)
+		}
+		return true
+	})
+	return values, cobra.ShellCompDirectiveNoFileComp
 }
 
-// completeConfigHint fetches the config hint and returns the value of valueKey
-// for each enabled item under arrayPath (e.g. "runtimes.hint" / "id").
-func (r *jobsRunner) completeConfigHint(cmd *cobra.Command, arrayPath, valueKey string) []string {
-	if r.getConfigHint == nil {
-		return nil
-	}
+func (r *jobsRunner) fetchForCompletion(cmd *cobra.Command, op *spec.Operation) ([]byte, error) {
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-
-	body, err := r.execOnce(ctx, r.getConfigHint, nil, nil, "")
-	if err != nil {
-		return nil
-	}
-
-	var values []string
-	gjson.GetBytes(body, arrayPath).ForEach(func(_, item gjson.Result) bool {
-		// Skip items the org cannot use; be lenient when "enabled" is absent.
-		if item.Get("enabled").Exists() && !item.Get("enabled").Bool() {
-			return true
-		}
-		if v := strings.TrimSpace(item.Get(valueKey).String()); v != "" {
-			values = append(values, v)
-		}
-		return true
-	})
-	return values
+	return r.execOnce(ctx, op, nil, nil, "")
 }
 
 func (r *jobsRunner) execOnce(ctx context.Context, op *spec.Operation, pathArgs []string, query []executor.QueryPair, body string) ([]byte, error) {
