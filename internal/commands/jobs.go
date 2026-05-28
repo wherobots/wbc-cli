@@ -43,6 +43,7 @@ type jobsRunner struct {
 	cfg             config.Config
 	runtime         *spec.RuntimeSpec
 	client          *http.Client
+	flags           *GlobalFlags
 	createRun       *spec.Operation
 	createUploadURL *spec.Operation
 	getDirectory    *spec.Operation
@@ -56,8 +57,8 @@ type jobsRunner struct {
 	listRuns        *spec.Operation
 }
 
-func addJobsCustomCommands(root *cobra.Command, cfg config.Config, runtimeSpec *spec.RuntimeSpec, client *http.Client) {
-	runner, ok := newJobsRunner(cfg, runtimeSpec, client)
+func addJobsCustomCommands(root *cobra.Command, cfg config.Config, runtimeSpec *spec.RuntimeSpec, client *http.Client, flags *GlobalFlags) {
+	runner, ok := newJobsRunner(cfg, runtimeSpec, client, flags)
 	if !ok {
 		return
 	}
@@ -81,7 +82,7 @@ func addJobsCustomCommands(root *cobra.Command, cfg config.Config, runtimeSpec *
 	root.AddCommand(jobsCmd)
 }
 
-func newJobsRunner(cfg config.Config, runtimeSpec *spec.RuntimeSpec, client *http.Client) (*jobsRunner, bool) {
+func newJobsRunner(cfg config.Config, runtimeSpec *spec.RuntimeSpec, client *http.Client, flags *GlobalFlags) (*jobsRunner, bool) {
 	if runtimeSpec == nil {
 		return nil, false
 	}
@@ -90,11 +91,12 @@ func newJobsRunner(cfg config.Config, runtimeSpec *spec.RuntimeSpec, client *htt
 		cfg:             cfg,
 		runtime:         runtimeSpec,
 		client:          client,
+		flags:           flags,
 		createRun:       findOperation(runtimeSpec, "POST", "/runs"),
 		createUploadURL: findOperation(runtimeSpec, "POST", "/files/upload-url"),
 		getDirectory:    findOperation(runtimeSpec, "GET", "/files/dir"),
 		getIntegration:  findOperation(runtimeSpec, "GET", "/files/integration-dir"),
-		getConfigHint:   findOperation(runtimeSpec, "GET", "/notebooks/config-hint"),
+		getConfigHint:   findOperation(runtimeSpec, "GET", "/me/jupyter/lab/config-hint"),
 		getMe:           findOperation(runtimeSpec, "GET", "/users/me"),
 		getOrganization: findOperation(runtimeSpec, "GET", "/organization"),
 		getRun:          findOperation(runtimeSpec, "GET", "/runs/{run_id}"),
@@ -156,9 +158,18 @@ func (r *jobsRunner) newCreateCommand() *cobra.Command {
 				return fmt.Errorf("invalid --output %q (expected text|json)", output)
 			}
 
-			resolvedScript, err := r.prepareScript(cmd.Context(), script, name, noUpload, uploadPath)
-			if err != nil {
-				return err
+			dryRun := r.flags != nil && r.flags.DryRun
+
+			// Skip script upload in dry-run mode: prepareScript would issue
+			// org/file-store lookups and a presigned-URL upload, none of which
+			// belong in a "no side effects" preview.
+			resolvedScript := script
+			if !dryRun {
+				var err error
+				resolvedScript, err = r.prepareScript(cmd.Context(), script, name, noUpload, uploadPath)
+				if err != nil {
+					return err
+				}
 			}
 
 			payload, err := buildRunPayload(resolvedScript, name, runtimeID, timeoutSec, argsRaw, sparkConfigs, depPypi, depFiles, jarMainClass)
@@ -178,9 +189,12 @@ func (r *jobsRunner) newCreateCommand() *cobra.Command {
 				query = append(query, executor.QueryPair{Key: "region", Value: runRegion})
 			}
 
-			respBody, err := r.execOnce(cmd.Context(), r.createRun, nil, query, string(payloadJSON))
+			respBody, err := r.executeOrDryRun(cmd.Context(), cmd.OutOrStdout(), r.createRun, nil, query, string(payloadJSON))
 			if err != nil {
 				return err
+			}
+			if respBody == nil {
+				return nil
 			}
 
 			runID := strings.TrimSpace(gjson.GetBytes(respBody, "id").String())
@@ -612,14 +626,19 @@ func (r *jobsRunner) newLogsCommand() *cobra.Command {
 				return fmt.Errorf("invalid --output %q (expected text|json)", output)
 			}
 
-			if !follow {
+			dryRun := r.flags != nil && r.flags.DryRun
+
+			if !follow || dryRun {
 				size := 1000
 				if tail > 0 {
 					size = tail
 				}
-				respBody, err := r.execWithRetry(cmd.Context(), r.getRunLogs, []string{runID}, []executor.QueryPair{{Key: "cursor", Value: "0"}, {Key: "size", Value: fmt.Sprintf("%d", size)}}, "")
+				respBody, err := r.executeOrDryRun(cmd.Context(), cmd.OutOrStdout(), r.getRunLogs, []string{runID}, []executor.QueryPair{{Key: "cursor", Value: "0"}, {Key: "size", Value: fmt.Sprintf("%d", size)}}, "")
 				if err != nil {
 					return err
+				}
+				if respBody == nil {
+					return nil
 				}
 
 				if output == outputJSON {
@@ -784,9 +803,12 @@ func (r *jobsRunner) newMetricsCommand() *cobra.Command {
 				return fmt.Errorf("invalid --output %q (expected text|json)", output)
 			}
 
-			respBody, err := r.execWithRetry(cmd.Context(), r.getRunMetrics, []string{runID}, nil, "")
+			respBody, err := r.executeOrDryRun(cmd.Context(), cmd.OutOrStdout(), r.getRunMetrics, []string{runID}, nil, "")
 			if err != nil {
 				return err
+			}
+			if respBody == nil {
+				return nil
 			}
 
 			if output == outputJSON {
@@ -915,9 +937,12 @@ func (r *jobsRunner) executeList(cmd *cobra.Command, statuses []string, name, af
 		query = append(query, executor.QueryPair{Key: "status", Value: normalized})
 	}
 
-	respBody, err := r.execWithRetry(cmd.Context(), r.listRuns, nil, query, "")
+	respBody, err := r.executeOrDryRun(cmd.Context(), cmd.OutOrStdout(), r.listRuns, nil, query, "")
 	if err != nil {
 		return err
+	}
+	if respBody == nil {
+		return nil
 	}
 
 	if output == outputJSON {
@@ -1042,6 +1067,24 @@ func (r *jobsRunner) execOnce(ctx context.Context, op *spec.Operation, pathArgs 
 		return nil, err
 	}
 	return executor.Do(r.client, req)
+}
+
+// executeOrDryRun routes the request through execWithRetry, unless the global
+// --dry-run flag is set, in which case it prints the equivalent curl to w and
+// returns (nil, nil). Callers MUST short-circuit when respBody is nil to avoid
+// parsing a missing response.
+func (r *jobsRunner) executeOrDryRun(ctx context.Context, w io.Writer, op *spec.Operation, pathArgs []string, query []executor.QueryPair, body string) ([]byte, error) {
+	if r.flags != nil && r.flags.DryRun {
+		req, err := executor.BuildRequest(ctx, r.cfg, r.runtime, op, pathArgs, query, body)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := fmt.Fprintln(w, executor.RenderCurl(req, body)); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+	return r.execWithRetry(ctx, op, pathArgs, query, body)
 }
 
 func (r *jobsRunner) execWithRetry(ctx context.Context, op *spec.Operation, pathArgs []string, query []executor.QueryPair, body string) ([]byte, error) {
