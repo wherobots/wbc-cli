@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -832,6 +833,71 @@ func TestFormatMetricValue(t *testing.T) {
 	}
 }
 
+func TestJobsCreateDryRunSkipsRequest(t *testing.T) {
+	t.Parallel()
+
+	var serverHits int32
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&serverHits, 1)
+	}))
+	defer server.Close()
+
+	root := buildJobsTestRoot(server.URL)
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{
+		"job-runs", "create", "s3://fake-bucket/x.py",
+		"--name", "dryrun-test",
+		"--dry-run",
+	})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if hits := atomic.LoadInt32(&serverHits); hits != 0 {
+		t.Fatalf("expected no HTTP requests during --dry-run, got %d", hits)
+	}
+
+	got := strings.TrimSpace(out.String())
+	if !strings.HasPrefix(got, "curl -X POST '"+server.URL+"/runs") {
+		t.Fatalf("expected curl POST %s/runs, got %q", server.URL, got)
+	}
+	if !strings.Contains(got, "dryrun-test") {
+		t.Fatalf("expected curl output to include job name, got %q", got)
+	}
+}
+
+func TestJobsListDryRunSkipsRequest(t *testing.T) {
+	t.Parallel()
+
+	var serverHits int32
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&serverHits, 1)
+	}))
+	defer server.Close()
+
+	root := buildJobsTestRoot(server.URL)
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"job-runs", "list", "--dry-run"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if hits := atomic.LoadInt32(&serverHits); hits != 0 {
+		t.Fatalf("expected no HTTP requests during --dry-run, got %d", hits)
+	}
+
+	got := strings.TrimSpace(out.String())
+	if !strings.HasPrefix(got, "curl -X GET '"+server.URL+"/runs") {
+		t.Fatalf("expected curl GET %s/runs, got %q", server.URL, got)
+	}
+}
+
 func TestBuildRunPayloadRejectsBadDependency(t *testing.T) {
 	t.Parallel()
 
@@ -893,7 +959,7 @@ func TestCompleteRuntimesSkipsDisabled(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/notebooks/config-hint" {
+		if r.Method == http.MethodGet && r.URL.Path == "/me/jupyter/lab/config-hint" {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"runtimes":{"hint":[{"id":"tiny","enabled":true},{"id":"small"},{"id":"x-large","enabled":false}]}}`)
 			return
@@ -913,7 +979,7 @@ func TestCompleteRuntimesSkipsDisabled(t *testing.T) {
 
 func newJobsRunnerForTest(baseURL string) *jobsRunner {
 	cfg := config.Config{AppName: "wherobots", APIKey: "test-key", HTTPTimeout: time.Second}
-	runner, _ := newJobsRunner(cfg, jobsTestRuntimeSpec(baseURL), http.DefaultClient)
+	runner, _ := newJobsRunner(cfg, jobsTestRuntimeSpec(baseURL), http.DefaultClient, nil)
 	return runner
 }
 
@@ -976,10 +1042,6 @@ func jobsTestRuntimeSpec(baseURL string) *spec.RuntimeSpec {
 				},
 			},
 			{
-				Method: "GET",
-				Path:   "/notebooks/config-hint",
-			},
-			{
 				Method: "POST",
 				Path:   "/runs",
 				QueryParams: []spec.Parameter{
@@ -1009,6 +1071,10 @@ func jobsTestRuntimeSpec(baseURL string) *spec.RuntimeSpec {
 			{
 				Method: "GET",
 				Path:   "/runs",
+			},
+			{
+				Method: "GET",
+				Path:   "/me/jupyter/lab/config-hint",
 			},
 		},
 	}

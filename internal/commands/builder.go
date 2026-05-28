@@ -112,7 +112,7 @@ func BuildRootCommand(cfg config.Config, runtimeSpec *spec.RuntimeSpec) *cobra.C
 		parent.AddCommand(methodCommand)
 	}
 
-	addJobsCustomCommands(root, cfg, runtimeSpec, client)
+	addJobsCustomCommands(root, cfg, runtimeSpec, client, flags)
 
 	return root
 }
