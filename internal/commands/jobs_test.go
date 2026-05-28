@@ -62,6 +62,110 @@ func TestJobsRunNoWatchPrintsSummary(t *testing.T) {
 	}
 }
 
+func TestJobsRunOmitsRegionAndRuntimeWhenUnset(t *testing.T) {
+	t.Parallel()
+
+	var hasRegionParam, runtimeInBody bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/organization":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"fileStore":{"bucketName":"managed-bucket"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/files/upload-url":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"uploadUrl":"https://example.com/upload"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/files/dir":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"name":"root","path":"s3://managed-bucket/customer/root"}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/runs":
+			_, hasRegionParam = r.URL.Query()["region"]
+			bodyBytes, _ := io.ReadAll(r.Body)
+			var payload map[string]any
+			_ = json.Unmarshal(bodyBytes, &payload)
+			_, runtimeInBody = payload["runtime"]
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"run-123","name":"test-job-001","status":"PENDING","createTime":"2026-01-01T00:00:00Z","payload":{}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	root := buildJobsTestRoot(server.URL)
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{
+		"job-runs", "create", "s3://bucket/script.py",
+		"--name", "test-job-001",
+		"--upload-path", "s3://override-bucket/custom/prefix",
+	})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if hasRegionParam {
+		t.Fatalf("expected no region query param when --run-region is unset")
+	}
+	if runtimeInBody {
+		t.Fatalf("expected runtime to be omitted from the body when --runtime is unset")
+	}
+}
+
+func TestJobsRunPassesArbitraryRegionAndRuntime(t *testing.T) {
+	t.Parallel()
+
+	var gotRegion, gotRuntime string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/organization":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"fileStore":{"bucketName":"managed-bucket"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/files/upload-url":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"uploadUrl":"https://example.com/upload"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/files/dir":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"name":"root","path":"s3://managed-bucket/customer/root"}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/runs":
+			gotRegion = r.URL.Query().Get("region")
+			bodyBytes, _ := io.ReadAll(r.Body)
+			var payload map[string]any
+			_ = json.Unmarshal(bodyBytes, &payload)
+			if v, ok := payload["runtime"].(string); ok {
+				gotRuntime = v
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"run-123","name":"test-job-001","status":"PENDING","createTime":"2026-01-01T00:00:00Z","payload":{}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	root := buildJobsTestRoot(server.URL)
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{
+		"job-runs", "create", "s3://bucket/script.py",
+		"--name", "test-job-001",
+		"--run-region", "byoc-acme-us-east-1",
+		"--runtime", "x-large",
+		"--upload-path", "s3://override-bucket/custom/prefix",
+	})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if gotRegion != "byoc-acme-us-east-1" {
+		t.Fatalf("expected region byoc-acme-us-east-1, got %q", gotRegion)
+	}
+	if gotRuntime != "x-large" {
+		t.Fatalf("expected runtime x-large, got %q", gotRuntime)
+	}
+}
+
 func TestJobsRunWatchReturnsErrorOnFailedStatus(t *testing.T) {
 	t.Parallel()
 
@@ -793,7 +897,8 @@ func buildJobsTestRootWithConfig(baseURL string, mutate func(*config.Config)) *c
 				Method: "POST",
 				Path:   "/runs",
 				QueryParams: []spec.Parameter{
-					{Name: "region", Location: "query", Required: true, Type: "string"},
+					// Optional: omitting it makes the API use the org default region.
+					{Name: "region", Location: "query", Required: false, Type: "string"},
 				},
 				RequestBody: &spec.RequestBodyInfo{Required: true, ContentType: "application/json", SchemaType: "object"},
 			},
