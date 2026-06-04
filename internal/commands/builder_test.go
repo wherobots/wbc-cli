@@ -2,11 +2,15 @@ package commands
 
 import (
 	"bytes"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"wherobots/cli/internal/config"
+	"wherobots/cli/internal/executor"
 	"wherobots/cli/internal/spec"
 )
 
@@ -263,5 +267,44 @@ func TestHelpShowsTypedFlagSamples(t *testing.T) {
 		!strings.Contains(help, "--metadata-json string") ||
 		!strings.Contains(help, "--json '{\"enabled\":false}'") {
 		t.Fatalf("help missing expected typed guidance:\n%s", help)
+	}
+}
+
+func TestAPICommandErrorReturnsRawJSONEnvelope(t *testing.T) {
+	t.Parallel()
+
+	envelope := `{"errors":[{"code":"BAD_REQUEST_ERROR","message":"Bad Request","details":"InvalidInputException (No storage source found for bucket: qni7xwfc8m)","path":"/files/upload-url","suggestion":"Update your request and try again."}],"requestId":"req-400"}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(envelope))
+	}))
+	defer server.Close()
+
+	cfg := config.Config{AppName: "wherobots", APIKey: "test-key", HTTPTimeout: time.Second}
+	runtimeSpec := &spec.RuntimeSpec{
+		BaseURL: server.URL,
+		Operations: []*spec.Operation{
+			{Method: "GET", Path: "/users"},
+		},
+	}
+
+	root := BuildRootCommand(cfg, runtimeSpec)
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"api", "users", "list"})
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected error from 400 response")
+	}
+	if got := err.Error(); got != envelope {
+		t.Fatalf("expected raw JSON envelope, got %q", got)
+	}
+
+	var httpErr *executor.HTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected wrapped *executor.HTTPError with status 400, got %v", err)
 	}
 }
