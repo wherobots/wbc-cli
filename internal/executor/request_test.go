@@ -80,6 +80,19 @@ func TestHTTPErrorFallsBackOnNonEnvelopeJSON(t *testing.T) {
 	}
 }
 
+func TestHTTPErrorFallsBackOnErrorsArrayWithUnexpectedShape(t *testing.T) {
+	t.Parallel()
+
+	// An "errors" array whose items are not envelope objects (e.g. plain
+	// strings) must not be mistaken for the standard envelope — rendering
+	// it would drop all detail.
+	body := `{"errors":["boom","bang"]}`
+	got := (&HTTPError{StatusCode: 400, Body: []byte(body)}).Error()
+	if got != `request failed with HTTP 400: `+body {
+		t.Fatalf("expected raw fallback, got %q", got)
+	}
+}
+
 func TestAPIErrorDetailsExtractsDetailsFromWrappedError(t *testing.T) {
 	t.Parallel()
 

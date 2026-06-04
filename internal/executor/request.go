@@ -58,20 +58,34 @@ func parseAPIErrorEnvelope(body []byte) (apiErrorEnvelope, bool) {
 		return apiErrorEnvelope{}, false
 	}
 	items := gjson.GetBytes(body, "errors")
-	if !items.IsArray() || len(items.Array()) == 0 {
+	if !items.IsArray() {
+		return apiErrorEnvelope{}, false
+	}
+	entries := items.Array()
+	if len(entries) == 0 {
 		return apiErrorEnvelope{}, false
 	}
 
 	env := apiErrorEnvelope{RequestID: strings.TrimSpace(gjson.GetBytes(body, "requestId").String())}
-	for _, item := range items.Array() {
-		env.Errors = append(env.Errors, apiErrorDetail{
+	recognized := false
+	for _, item := range entries {
+		detail := apiErrorDetail{
 			Code:       strings.TrimSpace(item.Get("code").String()),
 			Message:    strings.TrimSpace(item.Get("message").String()),
 			Details:    strings.TrimSpace(item.Get("details").String()),
 			Suggestion: strings.TrimSpace(item.Get("suggestion").String()),
 			Field:      strings.TrimSpace(item.Get("field").String()),
 			DocURL:     strings.TrimSpace(item.Get("documentation_url").String()),
-		})
+		}
+		if detail.Code != "" || detail.Message != "" {
+			recognized = true
+		}
+		env.Errors = append(env.Errors, detail)
+	}
+	// Require at least one entry in the standard shape so foreign payloads
+	// that happen to carry an "errors" array fall back to the raw body.
+	if !recognized {
+		return apiErrorEnvelope{}, false
 	}
 	return env, true
 }
