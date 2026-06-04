@@ -1096,3 +1096,132 @@ func gjsonValid(raw string) bool {
 	var payload any
 	return json.Unmarshal([]byte(raw), &payload) == nil
 }
+
+func TestJobsRunUploadURLStorageSourceErrorIsActionable(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	script := dir + "/script.py"
+	if err := os.WriteFile(script, []byte("print('ok')\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	envelope := `{"errors":[{"code":"BAD_REQUEST_ERROR","message":"Bad Request","details":"InvalidInputException (No storage source found for bucket: flag-prefix)","path":"/files/upload-url","suggestion":"Update your request and try again."}],"requestId":"req-bug-2046"}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost && r.URL.Path == "/files/upload-url" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, envelope)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	root := buildJobsTestRoot(server.URL)
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"job-runs", "create", script, "--name", "test-job-001", "--upload-path", "s3://flag-bucket/flag-prefix"})
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected error from 400 upload-url response")
+	}
+	got := err.Error()
+	for _, want := range []string{
+		"requesting upload URL for s3://flag-bucket/flag-prefix/test-job-001/script.py",
+		"No storage source found for bucket: flag-prefix",
+		"Update your request and try again.",
+		"req-bug-2046",
+		"is not a registered storage source",
+		"omit --upload-path",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected error to contain %q, got:\n%s", want, got)
+		}
+	}
+}
+
+func TestJobsRunUploadURLNonEnvelopeErrorKeepsContextWithoutGuidance(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	script := dir + "/script.py"
+	if err := os.WriteFile(script, []byte("print('ok')\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/files/upload-url" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, "upstream rejected request")
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	root := buildJobsTestRoot(server.URL)
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"job-runs", "create", script, "--name", "test-job-001", "--upload-path", "s3://flag-bucket/flag-prefix"})
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected error from 400 upload-url response")
+	}
+	got := err.Error()
+	if !strings.Contains(got, "requesting upload URL for s3://flag-bucket/flag-prefix/test-job-001/script.py") {
+		t.Fatalf("expected upload context prefix, got:\n%s", got)
+	}
+	if !strings.Contains(got, "upstream rejected request") {
+		t.Fatalf("expected raw body fallback, got:\n%s", got)
+	}
+	if strings.Contains(got, "omit --upload-path") {
+		t.Fatalf("did not expect storage-source guidance for non-envelope error, got:\n%s", got)
+	}
+}
+
+func TestJobsRunUploadURLStorageSourceErrorWithoutOverrideOmitsGuidance(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	script := dir + "/script.py"
+	if err := os.WriteFile(script, []byte("print('ok')\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	envelope := `{"errors":[{"code":"BAD_REQUEST_ERROR","message":"Bad Request","details":"InvalidInputException (No storage source found for bucket: customer)","path":"/files/upload-url","suggestion":"Update your request and try again."}],"requestId":"req-managed"}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/organization":
+			_, _ = io.WriteString(w, `{"fileStore":{"id":"fs-file-store","bucketName":"managed-bucket"},"storageIntegrations":[{"id":"si-managed","path":"s3://managed-bucket/customer/root"}]}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/files/integration-dir":
+			_, _ = io.WriteString(w, `{"name":"root","path":"s3://managed-bucket/customer/root"}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/files/upload-url":
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, envelope)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	root := buildJobsTestRoot(server.URL)
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"job-runs", "create", script, "--name", "test-job-001"})
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected error from 400 upload-url response")
+	}
+	got := err.Error()
+	if !strings.Contains(got, "requesting upload URL for s3://managed-bucket/customer/root/test-job-001/script.py") {
+		t.Fatalf("expected upload context prefix, got:\n%s", got)
+	}
+	if strings.Contains(got, "omit --upload-path") {
+		t.Fatalf("did not expect override guidance when no --upload-path was given, got:\n%s", got)
+	}
+}
