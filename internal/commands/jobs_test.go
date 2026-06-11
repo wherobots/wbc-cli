@@ -1142,6 +1142,58 @@ func TestJobsRunUploadURLStorageSourceErrorIsActionable(t *testing.T) {
 	}
 }
 
+func TestJobsRunUploadURLStorageSourceErrorEnvOverrideIsActionable(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	script := dir + "/script.py"
+	if err := os.WriteFile(script, []byte("print('ok')\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	envelope := `{"errors":[{"code":"BAD_REQUEST_ERROR","message":"Bad Request","details":"InvalidInputException (No storage source found for bucket: env-prefix)","path":"/files/upload-url","suggestion":"Update your request and try again."}],"requestId":"req-bug-2046-env"}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost && r.URL.Path == "/files/upload-url" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, envelope)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	root := buildJobsTestRootWithConfig(server.URL, func(cfg *config.Config) {
+		cfg.UploadPath = "s3://env-bucket/env-prefix"
+	})
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"job-runs", "create", script, "--name", "test-job-001"})
+
+	err := root.Execute()
+	if err == nil {
+		t.Fatal("expected error from 400 upload-url response")
+	}
+	got := err.Error()
+	for _, want := range []string{
+		"requesting upload URL for s3://env-bucket/env-prefix/test-job-001/script.py",
+		"No storage source found for bucket: env-prefix",
+		"Update your request and try again.",
+		"req-bug-2046-env",
+		"is not a registered storage source",
+		"unset WHEROBOTS_UPLOAD_PATH",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected error to contain %q, got:\n%s", want, got)
+		}
+	}
+	// The override came from the env var, so the misleading flag guidance must
+	// not appear.
+	if strings.Contains(got, "omit --upload-path") {
+		t.Fatalf("did not expect --upload-path guidance for env-var override, got:\n%s", got)
+	}
+}
+
 func TestJobsRunUploadURLNonEnvelopeErrorKeepsContextWithoutGuidance(t *testing.T) {
 	t.Parallel()
 
