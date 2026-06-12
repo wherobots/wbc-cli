@@ -405,7 +405,7 @@ func (r *jobsRunner) prepareScript(ctx context.Context, script, name string, noU
 		return "", fmt.Errorf("local script path requires upload; remove --no-upload or provide s3:// URI")
 	}
 
-	bucket, prefix, err := r.resolveManagedUploadTarget(ctx, uploadPathOverride)
+	bucket, prefix, overrideSource, err := r.resolveManagedUploadTarget(ctx, uploadPathOverride)
 	if err != nil {
 		return "", err
 	}
@@ -422,7 +422,7 @@ func (r *jobsRunner) prepareScript(ctx context.Context, script, name string, noU
 	uploadKey := fmt.Sprintf("%s/%s", bucket, key)
 	respBody, err := r.execWithRetry(ctx, r.createUploadURL, nil, []executor.QueryPair{{Key: "key", Value: uploadKey}}, "")
 	if err != nil {
-		return "", err
+		return "", wrapUploadURLError(err, bucket, key, overrideSource)
 	}
 
 	uploadURL := strings.TrimSpace(gjson.GetBytes(respBody, "uploadUrl").String())
@@ -431,28 +431,47 @@ func (r *jobsRunner) prepareScript(ctx context.Context, script, name string, noU
 	}
 
 	if err := executor.UploadFileToPresignedURL(ctx, r.client, uploadURL, script); err != nil {
-		return "", err
+		return "", fmt.Errorf("uploading script to s3://%s/%s: %w", bucket, key, err)
 	}
 
 	return fmt.Sprintf("s3://%s/%s", bucket, key), nil
 }
 
-func (r *jobsRunner) resolveManagedUploadTarget(ctx context.Context, uploadPathOverride string) (string, string, error) {
+// uploadOverrideSource records where an explicit upload-path override came
+// from, so error guidance can name the right knob to change (or stay silent
+// when the target was resolved from managed storage).
+type uploadOverrideSource int
+
+const (
+	// uploadOverrideNone means the upload target was resolved from managed
+	// storage rather than an explicit override.
+	uploadOverrideNone uploadOverrideSource = iota
+	// uploadOverrideFlag means the target came from the --upload-path flag.
+	uploadOverrideFlag
+	// uploadOverrideEnv means the target came from the WHEROBOTS_UPLOAD_PATH
+	// environment variable.
+	uploadOverrideEnv
+)
+
+// resolveManagedUploadTarget returns the upload bucket and prefix, plus the
+// source of any explicit override (--upload-path flag or WHEROBOTS_UPLOAD_PATH)
+// versus managed-storage resolution.
+func (r *jobsRunner) resolveManagedUploadTarget(ctx context.Context, uploadPathOverride string) (string, string, uploadOverrideSource, error) {
 	if bucket, prefix, ok, err := resolveUploadPath(strings.TrimSpace(uploadPathOverride)); err != nil {
-		return "", "", err
+		return "", "", uploadOverrideNone, err
 	} else if ok {
-		return bucket, prefix, nil
+		return bucket, prefix, uploadOverrideFlag, nil
 	}
 
 	if bucket, prefix, ok, err := resolveUploadPath(strings.TrimSpace(r.cfg.UploadPath)); err != nil {
-		return "", "", err
+		return "", "", uploadOverrideNone, err
 	} else if ok {
-		return bucket, prefix, nil
+		return bucket, prefix, uploadOverrideEnv, nil
 	}
 
 	orgBody, err := r.execWithRetry(ctx, r.getOrganization, nil, nil, "")
 	if err != nil {
-		return "", "", fmt.Errorf("unable to resolve managed storage directory via API: failed to fetch organization: %w", err)
+		return "", "", uploadOverrideNone, fmt.Errorf("unable to resolve managed storage directory via API: failed to fetch organization: %w", err)
 	}
 
 	bucket := strings.TrimSpace(gjson.GetBytes(orgBody, "fileStore.bucketName").String())
@@ -462,7 +481,7 @@ func (r *jobsRunner) resolveManagedUploadTarget(ctx context.Context, uploadPathO
 		bucket = parsedBucket
 	}
 	if bucket == "" {
-		return "", "", fmt.Errorf("unable to resolve managed storage directory via API: organization fileStore bucket not available")
+		return "", "", uploadOverrideNone, fmt.Errorf("unable to resolve managed storage directory via API: organization fileStore bucket not available")
 	}
 
 	integrationIDs := make([]string, 0, 4)
@@ -508,7 +527,7 @@ func (r *jobsRunner) resolveManagedUploadTarget(ctx context.Context, uploadPathO
 				if prefix == "" {
 					prefix = "wherobots-jobs"
 				}
-				return parsedBucket, prefix, nil
+				return parsedBucket, prefix, uploadOverrideNone, nil
 			}
 		}
 	}
@@ -527,7 +546,7 @@ func (r *jobsRunner) resolveManagedUploadTarget(ctx context.Context, uploadPathO
 						path = "s3://" + path
 					}
 					if parsedBucket, prefix, ok := splitS3Path(path); ok && parsedBucket != "" {
-						return parsedBucket, prefix, nil
+						return parsedBucket, prefix, uploadOverrideNone, nil
 					}
 				}
 			}
@@ -536,11 +555,11 @@ func (r *jobsRunner) resolveManagedUploadTarget(ctx context.Context, uploadPathO
 
 	dirBody, err := r.execWithRetry(ctx, r.getDirectory, nil, []executor.QueryPair{{Key: "dir", Value: bucket}}, "")
 	if err != nil {
-		return "", "", fmt.Errorf("unable to resolve managed storage directory via API: %w", err)
+		return "", "", uploadOverrideNone, fmt.Errorf("unable to resolve managed storage directory via API: %w", err)
 	}
 	path := strings.TrimSpace(gjson.GetBytes(dirBody, "path").String())
 	if path == "" {
-		return "", "", fmt.Errorf("managed storage directory response missing path")
+		return "", "", uploadOverrideNone, fmt.Errorf("managed storage directory response missing path")
 	}
 	if !strings.HasPrefix(strings.ToLower(path), "s3://") {
 		path = "s3://" + path
@@ -548,17 +567,47 @@ func (r *jobsRunner) resolveManagedUploadTarget(ctx context.Context, uploadPathO
 
 	bucket, prefix, ok := splitS3Path(path)
 	if !ok {
-		return "", "", fmt.Errorf("managed storage directory is not a valid s3 path: %q", path)
+		return "", "", uploadOverrideNone, fmt.Errorf("managed storage directory is not a valid s3 path: %q", path)
 	}
 
 	if bucket == "" {
-		return "", "", fmt.Errorf("managed storage path missing bucket")
+		return "", "", uploadOverrideNone, fmt.Errorf("managed storage path missing bucket")
 	}
 	if prefix == "" {
 		prefix = "wherobots-jobs"
 	}
 
-	return bucket, prefix, nil
+	return bucket, prefix, uploadOverrideNone, nil
+}
+
+// wrapUploadURLError adds context about the attempted upload target to a
+// failed /files/upload-url request and, when the target came from an explicit
+// --upload-path / WHEROBOTS_UPLOAD_PATH override that the API rejected for
+// lacking a storage source, appends actionable guidance naming the override
+// the caller actually set.
+func wrapUploadURLError(err error, bucket, key string, source uploadOverrideSource) error {
+	wrapped := fmt.Errorf("requesting upload URL for s3://%s/%s: %w", bucket, key, err)
+	if source == uploadOverrideNone {
+		return wrapped
+	}
+	detail, ok := executor.APIErrorDetails(err)
+	// NOTE: fragile match — the server only signals "missing storage source" via free-text
+	// details; the envelope code is the generic BAD_REQUEST_ERROR. This guidance is purely
+	// additive, so a missed match just omits the hint, never errors.
+	if !ok || !strings.Contains(strings.ToLower(detail), "no storage source found") {
+		return wrapped
+	}
+	// Name the knob the caller actually set so the fix is correct for both
+	// the --upload-path flag and the WHEROBOTS_UPLOAD_PATH env var.
+	unsetHint := "omit --upload-path"
+	if source == uploadOverrideEnv {
+		unsetHint = "unset WHEROBOTS_UPLOAD_PATH"
+	}
+	return fmt.Errorf(`%w
+
+The upload path s3://%s/... is not a registered storage source for your organization. To fix this:
+  - %s to upload to your organization's managed storage, or
+  - use a path under a registered storage integration`, wrapped, bucket, unsetHint)
 }
 
 func resolveUploadPath(raw string) (bucket, prefix string, ok bool, err error) {

@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,10 +26,132 @@ type HTTPError struct {
 }
 
 func (e *HTTPError) Error() string {
+	if env, ok := parseAPIErrorEnvelope(e.Body); ok {
+		return formatAPIError(e.StatusCode, env)
+	}
 	if len(e.Body) == 0 {
 		return fmt.Sprintf("request failed with HTTP %d", e.StatusCode)
 	}
 	return fmt.Sprintf("request failed with HTTP %d: %s", e.StatusCode, strings.TrimSpace(string(e.Body)))
+}
+
+// apiErrorDetail mirrors one entry of the standard Wherobots API error
+// envelope: {"errors":[{code,message,details,suggestion,...}],"requestId"}.
+type apiErrorDetail struct {
+	Code       string
+	Message    string
+	Details    string
+	Suggestion string
+	Field      string
+	DocURL     string
+}
+
+type apiErrorEnvelope struct {
+	Errors    []apiErrorDetail
+	RequestID string
+}
+
+// parseAPIErrorEnvelope reports ok only when body is JSON containing a
+// non-empty "errors" array in the standard envelope shape.
+func parseAPIErrorEnvelope(body []byte) (apiErrorEnvelope, bool) {
+	if !gjson.ValidBytes(body) {
+		return apiErrorEnvelope{}, false
+	}
+	items := gjson.GetBytes(body, "errors")
+	if !items.IsArray() {
+		return apiErrorEnvelope{}, false
+	}
+	entries := items.Array()
+	if len(entries) == 0 {
+		return apiErrorEnvelope{}, false
+	}
+
+	env := apiErrorEnvelope{RequestID: strings.TrimSpace(gjson.GetBytes(body, "requestId").String())}
+	recognized := false
+	for _, item := range entries {
+		detail := apiErrorDetail{
+			Code:       strings.TrimSpace(item.Get("code").String()),
+			Message:    strings.TrimSpace(item.Get("message").String()),
+			Details:    strings.TrimSpace(item.Get("details").String()),
+			Suggestion: strings.TrimSpace(item.Get("suggestion").String()),
+			Field:      strings.TrimSpace(item.Get("field").String()),
+			DocURL:     strings.TrimSpace(item.Get("documentation_url").String()),
+		}
+		if detail.Code != "" || detail.Message != "" {
+			recognized = true
+		}
+		env.Errors = append(env.Errors, detail)
+	}
+	// Require at least one entry in the standard shape so foreign payloads
+	// that happen to carry an "errors" array fall back to the raw body.
+	if !recognized {
+		return apiErrorEnvelope{}, false
+	}
+	return env, true
+}
+
+func formatAPIError(statusCode int, env apiErrorEnvelope) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "request failed with HTTP %d", statusCode)
+	if len(env.Errors) == 1 && env.Errors[0].Code != "" {
+		fmt.Fprintf(&b, " (%s)", env.Errors[0].Code)
+	}
+
+	appendLine := func(label, value string) {
+		if value == "" {
+			return
+		}
+		fmt.Fprintf(&b, "\n  %-11s %s", label+":", value)
+	}
+
+	for idx, detail := range env.Errors {
+		if len(env.Errors) > 1 {
+			fmt.Fprintf(&b, "\nerror %d (%s)", idx+1, detail.Code)
+		}
+		appendLine("message", detail.Message)
+		appendLine("details", detail.Details)
+		appendLine("suggestion", detail.Suggestion)
+		appendLine("field", detail.Field)
+		appendLine("docs", detail.DocURL)
+	}
+	appendLine("request id", env.RequestID)
+	return b.String()
+}
+
+// APIErrorDetails returns the "details" of the first envelope error when err
+// wraps an *HTTPError whose body is a standard API error envelope.
+func APIErrorDetails(err error) (string, bool) {
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) {
+		return "", false
+	}
+	env, ok := parseAPIErrorEnvelope(httpErr.Body)
+	if !ok {
+		return "", false
+	}
+	return env.Errors[0].Details, true
+}
+
+// JSONError preserves the raw API error body so machine-oriented commands can
+// emit the JSON envelope verbatim instead of the human-readable rendering.
+type JSONError struct {
+	httpErr *HTTPError
+}
+
+// NewJSONError wraps an *HTTPError so Error() returns the raw JSON body.
+func NewJSONError(httpErr *HTTPError) *JSONError {
+	return &JSONError{httpErr: httpErr}
+}
+
+func (e *JSONError) Error() string {
+	if body := strings.TrimSpace(string(e.httpErr.Body)); body != "" && gjson.Valid(body) {
+		return body
+	}
+	return e.httpErr.Error()
+}
+
+func (e *JSONError) Unwrap() error {
+	return e.httpErr
 }
 
 func BuildRequest(

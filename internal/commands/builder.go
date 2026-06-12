@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -195,6 +196,12 @@ func buildOperationCommand(
 
 		respBody, err := executor.Do(client, req)
 		if err != nil {
+			// api commands are machine-oriented: surface the API error
+			// envelope as raw JSON instead of the human-readable rendering.
+			var httpErr *executor.HTTPError
+			if errors.As(err, &httpErr) {
+				return executor.NewJSONError(httpErr)
+			}
 			return err
 		}
 
