@@ -314,22 +314,37 @@ func resolveParamType(param *highv3.Parameter) string {
 	return resolveSchemaType(param.Schema)
 }
 
+// maxSchemaResolveDepth bounds recursion through composition keywords so a
+// self-referential schema (a circular $ref) cannot cause infinite recursion.
+const maxSchemaResolveDepth = 16
+
 func resolveSchemaType(proxy *highbase.SchemaProxy) string {
-	if proxy == nil {
-		return "string"
+	if resolved := resolveSchemaTypeDepth(proxy, 0); resolved != "" {
+		return resolved
+	}
+	return "string"
+}
+
+// resolveSchemaTypeDepth returns the resolved type, or "" when the schema has
+// no discernible concrete type (so callers can fall back or keep searching).
+// "string" is never used as the unresolved sentinel, so a genuine string
+// alternative in a union is not skipped over.
+func resolveSchemaTypeDepth(proxy *highbase.SchemaProxy, depth int) string {
+	if proxy == nil || depth > maxSchemaResolveDepth {
+		return ""
 	}
 
 	schema := proxy.Schema()
 	if schema == nil {
 		rebuilt, err := proxy.BuildSchema()
 		if err != nil || rebuilt == nil {
-			return "string"
+			return ""
 		}
 		schema = rebuilt
 	}
 
-	if len(schema.Type) > 0 && schema.Type[0] != "" {
-		return schema.Type[0]
+	if t := firstConcreteType(schema.Type); t != "" {
+		return t
 	}
 	if schema.Properties != nil && orderedmap.Len(schema.Properties) > 0 {
 		return "object"
@@ -337,7 +352,34 @@ func resolveSchemaType(proxy *highbase.SchemaProxy) string {
 	if schema.Items != nil && schema.Items.IsA() && schema.Items.A != nil {
 		return "array"
 	}
-	return "string"
+
+	// FastAPI/Pydantic models an optional object field as
+	// `anyOf: [{$ref -> object}, {type: "null"}]`, leaving the wrapper schema
+	// with no direct type or properties. Recurse into the composition keywords
+	// and return the first member that resolves to a concrete (non-null) type
+	// so these fields are treated as JSON objects/arrays rather than plain
+	// strings, while still preferring an earlier string alternative over a
+	// later stricter one in a polymorphic union.
+	for _, group := range [][]*highbase.SchemaProxy{schema.AllOf, schema.AnyOf, schema.OneOf} {
+		for _, sub := range group {
+			if resolved := resolveSchemaTypeDepth(sub, depth+1); resolved != "" {
+				return resolved
+			}
+		}
+	}
+
+	return ""
+}
+
+// firstConcreteType returns the first non-empty, non-"null" type from an
+// OpenAPI 3.1 type list (e.g. ["string", "null"]), or "" when none qualifies.
+func firstConcreteType(types []string) string {
+	for _, t := range types {
+		if t != "" && t != "null" {
+			return t
+		}
+	}
+	return ""
 }
 
 func isParamRequired(param *highv3.Parameter) bool {

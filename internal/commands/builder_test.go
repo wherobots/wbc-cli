@@ -226,6 +226,49 @@ func TestInvalidArgsReturnsUsageHint(t *testing.T) {
 	}
 }
 
+func TestObjectBodyFieldSerializesAsJSONObject(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{AppName: "wherobots", APIKey: "test-key", HTTPTimeout: time.Second}
+	runtimeSpec := &spec.RuntimeSpec{
+		BaseURL: "https://api.example.com",
+		Operations: []*spec.Operation{
+			{
+				Method: "POST",
+				Path:   "/runs",
+				RequestBody: &spec.RequestBodyInfo{
+					Required:   true,
+					SchemaType: "object",
+					Fields: []spec.BodyField{
+						{Name: "name", Type: "string", Required: true},
+						{Name: "runPython", Type: "object", Required: true},
+					},
+				},
+			},
+		},
+	}
+
+	root := BuildRootCommand(cfg, runtimeSpec)
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{
+		"api", "runs", "create",
+		"--name", "ftw-top5",
+		"--runpython-json", `{"uri":"s3://bucket/ftw_top5.py"}`,
+		"--dry-run",
+	})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, `"runPython":{"uri":"s3://bucket/ftw_top5.py"}`) {
+		t.Fatalf("object body field should serialize as a JSON object, got:\n%s", got)
+	}
+}
+
 func TestHelpShowsTypedFlagSamples(t *testing.T) {
 	t.Parallel()
 

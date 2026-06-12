@@ -122,3 +122,141 @@ func TestParseExtractsOperationsAndSchema(t *testing.T) {
 		t.Fatalf("field = %+v, want enabled:boolean required", op.RequestBody.Fields[0])
 	}
 }
+
+// TestParseResolvesComposedObjectBodyFields covers the WBC-43 bug: FastAPI/Pydantic
+// emits optional object fields as `anyOf: [{$ref -> object}, {type: "null"}]` and
+// required object fields as a bare `$ref`. Both must resolve to "object" (and arrays
+// to "array") so the command builder generates JSON-object flags rather than treating
+// them as plain strings.
+func TestParseResolvesComposedObjectBodyFields(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte(`{
+  "openapi": "3.1.0",
+  "info": { "title": "x", "version": "1" },
+  "servers": [{ "url": "https://api.example.com" }],
+  "paths": {
+    "/runs": {
+      "post": {
+        "operationId": "createRun",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["runPython"],
+                "properties": {
+                  "name": { "type": "string" },
+                  "runPython": { "anyOf": [ { "$ref": "#/components/schemas/RunPython" }, { "type": "null" } ] },
+                  "runJar": { "$ref": "#/components/schemas/RunJar" },
+                  "tags": { "anyOf": [ { "type": "array", "items": { "type": "string" } }, { "type": "null" } ] }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "RunPython": {
+        "type": "object",
+        "required": ["uri"],
+        "properties": {
+          "uri": { "type": "string" },
+          "args": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "RunJar": {
+        "type": "object",
+        "required": ["uri"],
+        "properties": { "uri": { "type": "string" } }
+      }
+    }
+  }
+}`)
+
+	parsed, err := Parse(raw, "")
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(parsed.Operations) != 1 {
+		t.Fatalf("operations = %d, want 1", len(parsed.Operations))
+	}
+
+	byField := make(map[string]BodyField)
+	for _, field := range parsed.Operations[0].RequestBody.Fields {
+		byField[field.Name] = field
+	}
+
+	cases := map[string]string{
+		"name":      "string",
+		"runPython": "object",
+		"runJar":    "object",
+		"tags":      "array",
+	}
+	for name, wantType := range cases {
+		field, ok := byField[name]
+		if !ok {
+			t.Fatalf("field %q missing from parsed body fields", name)
+		}
+		if field.Type != wantType {
+			t.Errorf("field %q type = %q, want %q", name, field.Type, wantType)
+		}
+	}
+}
+
+// TestParseScalarUnionPrefersFirstConcreteType guards against over-eager
+// composition resolution: a `str | int` union must resolve to its first
+// concrete alternative ("string"), not skip past it to a stricter type. The
+// resolver must only treat "null" (and unresolvable members) as skippable.
+func TestParseScalarUnionPrefersFirstConcreteType(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte(`{
+  "openapi": "3.1.0",
+  "info": { "title": "x", "version": "1" },
+  "paths": {
+    "/things": {
+      "post": {
+        "operationId": "createThing",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "mode": { "anyOf": [ { "type": "string" }, { "type": "integer" } ] }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  }
+}`)
+
+	parsed, err := Parse(raw, "")
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+
+	var mode *BodyField
+	for i := range parsed.Operations[0].RequestBody.Fields {
+		if parsed.Operations[0].RequestBody.Fields[i].Name == "mode" {
+			mode = &parsed.Operations[0].RequestBody.Fields[i]
+		}
+	}
+	if mode == nil {
+		t.Fatal("field \"mode\" missing from parsed body fields")
+	}
+	if mode.Type != "string" {
+		t.Errorf("field \"mode\" type = %q, want \"string\"", mode.Type)
+	}
+}
