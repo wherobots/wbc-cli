@@ -68,6 +68,17 @@ func addJobsCustomCommands(root *cobra.Command, cfg config.Config, runtimeSpec *
 		Short:         "Custom job-runs workflows",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		// Curated commands reuse shared api-subtree operations whose CommandPath
+		// is the api-tree name (e.g. runs.create). Stamp the invoked user-facing
+		// command name onto the context so BuildRequest reports it (e.g.
+		// job-runs.create) in the advisory X-Wherobots-Client header instead.
+		// PersistentPreRunE runs for the invoked subcommand, so `cmd` is the leaf
+		// (create/logs/list/metrics), and the context propagates to every request
+		// those commands issue, including internal helper calls.
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SetContext(executor.WithCommand(cmd.Context(), curatedCommandName(cmd)))
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
 		},
@@ -109,6 +120,25 @@ func newJobsRunner(cfg config.Config, runtimeSpec *spec.RuntimeSpec, client *htt
 		return nil, false
 	}
 	return r, true
+}
+
+// curatedCommandName returns the invoked command's user-facing dotted path,
+// excluding the root application name — e.g. `wherobots job-runs create`
+// becomes "job-runs.create". It walks the parent chain, so the value reflects
+// the actually-invoked command regardless of which shared operation it reuses.
+func curatedCommandName(cmd *cobra.Command) string {
+	if cmd == nil {
+		return ""
+	}
+	var segments []string
+	for c := cmd; c != nil && c.Parent() != nil; c = c.Parent() {
+		segments = append(segments, c.Name())
+	}
+	// Reverse into root-to-leaf order.
+	for i, j := 0, len(segments)-1; i < j; i, j = i+1, j-1 {
+		segments[i], segments[j] = segments[j], segments[i]
+	}
+	return strings.Join(segments, ".")
 }
 
 func findOperation(runtimeSpec *spec.RuntimeSpec, method, path string) *spec.Operation {

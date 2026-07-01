@@ -25,6 +25,32 @@ type QueryPair struct {
 	Value string
 }
 
+// commandContextKey carries the user-facing command name for the
+// X-Wherobots-Client header's cmd= field. Curated commands (e.g. `job-runs`)
+// reuse shared api-subtree operations whose CommandPath is the api-tree name
+// (e.g. runs.create), so they inject the invoked command name here to override
+// it. Dynamic api commands leave it unset and fall back to op.CommandPath.
+type commandContextKey struct{}
+
+// WithCommand returns a context that carries the user-facing command name
+// (dotted, e.g. "job-runs.create") for the X-Wherobots-Client header. An empty
+// name leaves the context unchanged so the op.CommandPath fallback applies.
+func WithCommand(ctx context.Context, command string) context.Context {
+	if command == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, commandContextKey{}, command)
+}
+
+// commandFromContext returns the command name set by WithCommand, or "".
+func commandFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	name, _ := ctx.Value(commandContextKey{}).(string)
+	return name
+}
+
 // clientHeaderName is the ordered, append-only client-identification header.
 // The CLI is an ORIGIN client, so it emits a single hop and never appends to
 // an existing value. The header is advisory only and never affects auth.
@@ -279,7 +305,14 @@ func BuildRequest(
 		req.Header.Set("Content-Type", contentType)
 	}
 	req.Header.Set("x-api-key", cfg.APIKey)
-	req.Header.Set(clientHeaderName, buildClientHeader(Version, strings.Join(op.CommandPath, ".")))
+	// Prefer the invoked command name carried on the context (set by curated
+	// commands whose shared op.CommandPath is the api-tree name); fall back to
+	// the operation's own CommandPath for dynamic api commands.
+	command := commandFromContext(ctx)
+	if command == "" {
+		command = strings.Join(op.CommandPath, ".")
+	}
+	req.Header.Set(clientHeaderName, buildClientHeader(Version, command))
 
 	return req, nil
 }

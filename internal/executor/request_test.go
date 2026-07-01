@@ -207,6 +207,55 @@ func TestBuildRequestInjectsWherobotsClientHeader(t *testing.T) {
 	}
 }
 
+func TestBuildRequestClientHeaderPrefersContextCommand(t *testing.T) {
+	// Not parallel: mutates the package-level Version var.
+	prev := Version
+	Version = "1.2.3"
+	t.Cleanup(func() { Version = prev })
+
+	cfg := config.Config{APIKey: "abc123"}
+	runtimeSpec := &spec.RuntimeSpec{BaseURL: "https://api.example.com"}
+	// op.CommandPath is the shared api-tree name; the context override must win.
+	op := &spec.Operation{
+		Method:      "POST",
+		Path:        "/runs",
+		CommandPath: []string{"runs", "create"},
+	}
+
+	ctx := WithCommand(context.Background(), "job-runs.create")
+	req, err := BuildRequest(ctx, cfg, runtimeSpec, op, nil, nil, `{}`)
+	if err != nil {
+		t.Fatalf("BuildRequest() error = %v", err)
+	}
+	if got, want := req.Header.Get("X-Wherobots-Client"), "client=cli;ver=1.2.3;cmd=job-runs.create"; got != want {
+		t.Fatalf("X-Wherobots-Client = %q, want %q", got, want)
+	}
+}
+
+func TestBuildRequestClientHeaderFallsBackToCommandPathWithoutContext(t *testing.T) {
+	// Not parallel: mutates the package-level Version var.
+	prev := Version
+	Version = "1.2.3"
+	t.Cleanup(func() { Version = prev })
+
+	cfg := config.Config{APIKey: "abc123"}
+	runtimeSpec := &spec.RuntimeSpec{BaseURL: "https://api.example.com"}
+	op := &spec.Operation{
+		Method:      "POST",
+		Path:        "/runs",
+		CommandPath: []string{"runs", "create"},
+	}
+
+	// No context command set: fall back to op.CommandPath.
+	req, err := BuildRequest(context.Background(), cfg, runtimeSpec, op, nil, nil, `{}`)
+	if err != nil {
+		t.Fatalf("BuildRequest() error = %v", err)
+	}
+	if got, want := req.Header.Get("X-Wherobots-Client"), "client=cli;ver=1.2.3;cmd=runs.create"; got != want {
+		t.Fatalf("X-Wherobots-Client = %q, want %q", got, want)
+	}
+}
+
 func TestBuildRequestWherobotsClientHeaderOmitsCommandWhenEmpty(t *testing.T) {
 	// Not parallel: mutates the package-level Version var.
 	prev := Version
