@@ -644,6 +644,112 @@ func TestJobsListDefaultsToText(t *testing.T) {
 	}
 }
 
+func TestJobsListEmitsCuratedCommandInClientHeader(t *testing.T) {
+	t.Parallel()
+
+	var gotClientHeader string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/runs" {
+			gotClientHeader = r.Header.Get("X-Wherobots-Client")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"items":[],"total":0,"next_page":null}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	root := buildJobsTestRoot(server.URL)
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"job-runs", "list"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	// The curated `job-runs list` command reuses the shared `GET /runs`
+	// operation, whose api-subtree CommandPath is `runs.<verb>`. The client
+	// header must report the user-facing curated command, not the shared op.
+	if !strings.HasSuffix(gotClientHeader, "cmd=job-runs.list") {
+		t.Fatalf("X-Wherobots-Client = %q, want cmd=job-runs.list", gotClientHeader)
+	}
+}
+
+func TestJobsCreateEmitsCuratedCommandInClientHeader(t *testing.T) {
+	t.Parallel()
+
+	var runsClientHeader string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/organization":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"fileStore":{"bucketName":"managed-bucket"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/files/upload-url":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"uploadUrl":"https://example.com/upload"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/files/dir":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"name":"root","path":"s3://managed-bucket/customer/root"}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/runs":
+			runsClientHeader = r.Header.Get("X-Wherobots-Client")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"run-123","name":"test-job-001","status":"PENDING","createTime":"2026-01-01T00:00:00Z","payload":{}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	root := buildJobsTestRoot(server.URL)
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{
+		"job-runs", "create", "s3://bucket/script.py",
+		"--name", "test-job-001",
+		"--upload-path", "s3://override-bucket/custom/prefix",
+	})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if !strings.HasSuffix(runsClientHeader, "cmd=job-runs.create") {
+		t.Fatalf("X-Wherobots-Client on POST /runs = %q, want cmd=job-runs.create", runsClientHeader)
+	}
+}
+
+func TestApiSubtreeEmitsDottedResourceCommandInClientHeader(t *testing.T) {
+	t.Parallel()
+
+	var gotClientHeader string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/runs" {
+			gotClientHeader = r.Header.Get("X-Wherobots-Client")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"items":[],"total":0,"next_page":null}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	root := buildJobsTestRoot(server.URL)
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	// The dynamic api subtree keeps its own operation CommandPath; invoking
+	// it directly must still report the api-tree command name.
+	root.SetArgs([]string{"api", "runs", "list"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if !strings.HasSuffix(gotClientHeader, "cmd=runs.list") {
+		t.Fatalf("X-Wherobots-Client = %q, want cmd=runs.list", gotClientHeader)
+	}
+}
+
 func TestJobsRunningAliasFiltersStatus(t *testing.T) {
 	t.Parallel()
 
