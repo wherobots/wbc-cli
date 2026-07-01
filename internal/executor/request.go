@@ -15,9 +15,45 @@ import (
 	"wherobots/cli/internal/spec"
 )
 
+// Version identifies the CLI build for the advisory X-Wherobots-Client header.
+// main.go overwrites it with the ldflags-injected build version; the "dev"
+// default keeps local and test builds working without wiring.
+var Version = "dev"
+
 type QueryPair struct {
 	Key   string
 	Value string
+}
+
+// clientHeaderName is the ordered, append-only client-identification header.
+// The CLI is an ORIGIN client, so it emits a single hop and never appends to
+// an existing value. The header is advisory only and never affects auth.
+const clientHeaderName = "X-Wherobots-Client"
+
+// clientHeaderSanitizer strips characters that would break the hop grammar
+// (commas separate hops, semicolons separate fields) so they can never appear
+// inside a value.
+var clientHeaderSanitizer = strings.NewReplacer(",", "_", ";", "_")
+
+// buildClientHeader renders this CLI's single origin hop:
+//
+//	client=cli;ver=<version>;cmd=<command>
+//
+// The cmd field is omitted when command is empty. Values are sanitized so no
+// comma or semicolon leaks into the grammar. An empty version falls back to
+// "dev" to match the package default.
+func buildClientHeader(version, command string) string {
+	if version == "" {
+		version = "dev"
+	}
+	var b strings.Builder
+	b.WriteString("client=cli;ver=")
+	b.WriteString(clientHeaderSanitizer.Replace(version))
+	if command != "" {
+		b.WriteString(";cmd=")
+		b.WriteString(clientHeaderSanitizer.Replace(command))
+	}
+	return b.String()
 }
 
 type HTTPError struct {
@@ -243,6 +279,7 @@ func BuildRequest(
 		req.Header.Set("Content-Type", contentType)
 	}
 	req.Header.Set("x-api-key", cfg.APIKey)
+	req.Header.Set(clientHeaderName, buildClientHeader(Version, strings.Join(op.CommandPath, ".")))
 
 	return req, nil
 }

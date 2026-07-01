@@ -184,6 +184,94 @@ func TestBuildRequestInjectsPathQueryBodyAndAuth(t *testing.T) {
 	}
 }
 
+func TestBuildRequestInjectsWherobotsClientHeader(t *testing.T) {
+	// Not parallel: mutates the package-level Version var.
+	prev := Version
+	Version = "1.2.3"
+	t.Cleanup(func() { Version = prev })
+
+	cfg := config.Config{APIKey: "abc123"}
+	runtimeSpec := &spec.RuntimeSpec{BaseURL: "https://api.example.com"}
+	op := &spec.Operation{
+		Method:      "GET",
+		Path:        "/job-runs",
+		CommandPath: []string{"job-runs", "list"},
+	}
+
+	req, err := BuildRequest(context.Background(), cfg, runtimeSpec, op, nil, nil, "")
+	if err != nil {
+		t.Fatalf("BuildRequest() error = %v", err)
+	}
+	if got, want := req.Header.Get("X-Wherobots-Client"), "client=cli;ver=1.2.3;cmd=job-runs.list"; got != want {
+		t.Fatalf("X-Wherobots-Client = %q, want %q", got, want)
+	}
+}
+
+func TestBuildRequestWherobotsClientHeaderOmitsCommandWhenEmpty(t *testing.T) {
+	// Not parallel: mutates the package-level Version var.
+	prev := Version
+	Version = "4.5.6"
+	t.Cleanup(func() { Version = prev })
+
+	cfg := config.Config{APIKey: "abc123"}
+	runtimeSpec := &spec.RuntimeSpec{BaseURL: "https://api.example.com"}
+	op := &spec.Operation{Method: "GET", Path: "/job-runs"}
+
+	req, err := BuildRequest(context.Background(), cfg, runtimeSpec, op, nil, nil, "")
+	if err != nil {
+		t.Fatalf("BuildRequest() error = %v", err)
+	}
+	if got, want := req.Header.Get("X-Wherobots-Client"), "client=cli;ver=4.5.6"; got != want {
+		t.Fatalf("X-Wherobots-Client = %q, want %q", got, want)
+	}
+}
+
+func TestBuildClientHeader(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		version string
+		command string
+		want    string
+	}{
+		{
+			name:    "version and command",
+			version: "1.2.3",
+			command: "job-runs.list",
+			want:    "client=cli;ver=1.2.3;cmd=job-runs.list",
+		},
+		{
+			name:    "empty command omits cmd",
+			version: "1.2.3",
+			command: "",
+			want:    "client=cli;ver=1.2.3",
+		},
+		{
+			name:    "empty version falls back to dev",
+			version: "",
+			command: "job-runs.list",
+			want:    "client=cli;ver=dev;cmd=job-runs.list",
+		},
+		{
+			name:    "sanitizes separators out of values",
+			version: "1,2;3",
+			command: "a;b,c.list",
+			want:    "client=cli;ver=1_2_3;cmd=a_b_c.list",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := buildClientHeader(tc.version, tc.command); got != tc.want {
+				t.Fatalf("buildClientHeader(%q, %q) = %q, want %q", tc.version, tc.command, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestBuildRequestMissingRequiredQueryReturnsError(t *testing.T) {
 	t.Parallel()
 

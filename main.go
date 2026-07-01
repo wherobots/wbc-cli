@@ -8,6 +8,7 @@ import (
 
 	"wherobots/cli/internal/commands"
 	"wherobots/cli/internal/config"
+	"wherobots/cli/internal/executor"
 	"wherobots/cli/internal/spec"
 	"wherobots/cli/internal/version"
 )
@@ -26,6 +27,11 @@ func main() {
 }
 
 func run(ctx context.Context) error {
+	// Surface the build version to the executor so outgoing requests carry the
+	// advisory X-Wherobots-Client header. Set here (not via ldflags directly on
+	// the executor var) to keep version wiring in one place.
+	executor.Version = buildVersion
+
 	// Start a background update check early so it runs in parallel with setup.
 	updateCh := version.CheckInBackground(ctx, buildVersion)
 
