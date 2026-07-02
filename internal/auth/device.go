@@ -193,6 +193,10 @@ func (c *Client) PollForToken(ctx context.Context, da *DeviceAuthorization) (*To
 			return nil, oauthErrorf("poll for sign-in", oauthErr)
 		}
 
+		// The server's expired_token response is the primary expiry signal;
+		// this client-side deadline is a guard for a slow or unresponsive
+		// server. It is checked after each poll, so one extra poll may occur
+		// once the deadline passes mid-sleep — harmless.
 		if da.ExpiresIn > 0 && time.Now().After(deadline) {
 			return nil, ErrExpiredToken
 		}

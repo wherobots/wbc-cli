@@ -367,7 +367,7 @@ func DoWithReauth(client *http.Client, req *http.Request, creds Credentials) ([]
 	if req.GetBody != nil {
 		retryBody, bodyErr := req.GetBody()
 		if bodyErr != nil {
-			return body, err
+			return nil, fmt.Errorf("rewind request body for 401 retry: %w", bodyErr)
 		}
 		retry.Body = retryBody
 	}
