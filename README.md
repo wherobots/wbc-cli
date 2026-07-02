@@ -4,7 +4,7 @@ A command-line interface for the [Wherobots](https://wherobots.com) Cloud API. S
 
 ## Prerequisites
 
-- A Wherobots Cloud account and API key
+- A Wherobots Cloud account
 - **Go 1.25.7+** (only if building from source)
 
 ## Installation
@@ -36,11 +36,13 @@ make build        # produces bin/wherobots
 
 ## Getting started
 
-1. **Set your API key** (required for all commands):
+1. **Sign in** (opens your browser):
 
    ```bash
-   export WHEROBOTS_API_KEY='<your-api-key>'
+   wherobots auth login
    ```
+
+   Or, for CI and scripts, use an API key instead — see [Authentication](#authentication).
 
 2. **Explore available commands:**
 
@@ -54,6 +56,30 @@ make build        # produces bin/wherobots
    ```bash
    wherobots job-runs create s3://bucket/script.py --name my-job-001 --watch
    ```
+
+## Authentication
+
+The CLI supports two credentials:
+
+- **Browser sign-in (OAuth)** — `wherobots auth login` prints a one-time confirmation code and opens your browser (pass `--no-browser` to get just the URL — handy over SSH, since the confirmation can happen on any device). The session is stored in your user config dir (`~/.config/wherobots/credentials.json` on Linux, `~/Library/Application Support/wherobots/credentials.json` on macOS) with `0600` permissions and refreshes automatically.
+- **API key** — create one at your [API keys settings page](https://cloud.wherobots.com/settings#api-keys) and `export WHEROBOTS_API_KEY='<your-api-key>'`. Best for CI and scripts.
+
+When both are present, **`WHEROBOTS_API_KEY` wins** — an explicitly-set env var always overrides a stored sign-in, so scripts behave predictably.
+
+```bash
+wherobots auth status    # which credential is active, account, token expiry
+wherobots auth logout    # remove the stored session (--all for every environment)
+```
+
+To sign in against a non-production environment, point both OAuth variables at its AuthKit tenant (mirroring how `WHEROBOTS_API_URL` selects the API host):
+
+```bash
+export WHEROBOTS_API_URL='https://api.staging.wherobots.com'
+export WHEROBOTS_OAUTH_DOMAIN='<staging-authkit-domain>'
+export WHEROBOTS_OAUTH_CLIENT_ID='<staging-client-id>'
+```
+
+Sessions are stored per OAuth domain, so production and staging sign-ins coexist.
 
 ## Commands
 
@@ -208,8 +234,10 @@ All configuration is done through environment variables.
 
 | Variable | Required | Description | Default |
 |----------|----------|-------------|---------|
-| `WHEROBOTS_API_KEY` | **Yes** | Your Wherobots API key. Sent as `x-api-key` header. | — |
+| `WHEROBOTS_API_KEY` | No | API key credential. Sent as `x-api-key` header; overrides a stored OAuth session. Either this or `wherobots auth login` is required. | — |
 | `WHEROBOTS_API_URL` | No | Base URL for the Wherobots API. | `https://api.cloud.wherobots.com` |
+| `WHEROBOTS_OAUTH_DOMAIN` | No | AuthKit domain used by `wherobots auth login`. | `https://login.cloud.wherobots.com` |
+| `WHEROBOTS_OAUTH_CLIENT_ID` | No | OAuth client ID used by `wherobots auth login`. | _(production CLI client)_ |
 | `WHEROBOTS_UPLOAD_PATH` | No | Default S3 root for local file uploads in `job-runs create`. | _(auto-resolved from your account)_ |
 | `OPENAPI_CACHE_TTL` | No | How long to cache the OpenAPI spec (Go duration, e.g. `15m`). | `15m` |
 | `OPENAPI_HTTP_TIMEOUT` | No | Timeout for fetching the OpenAPI spec (Go duration). | _(default)_ |
