@@ -24,7 +24,7 @@ Run a single test:
 go test -run TestName ./internal/commands/
 ```
 
-Required env var for runtime: `WHEROBOTS_API_KEY`
+Runtime credentials: `wherobots auth login` (OAuth device flow, stored session) or the `WHEROBOTS_API_KEY` env var. The env var takes precedence when both are present.
 
 ## Architecture
 
@@ -38,7 +38,11 @@ The CLI builds its command tree at startup from a live OpenAPI spec. `internal/s
 
 ### Request Execution Pipeline
 
-`internal/executor/request.go` builds authenticated HTTP requests (API key in `x-api-key` header). `dryrun.go` outputs the equivalent curl command when `--dry-run` is used. `upload.go` handles S3 presigned-URL uploads with a 500MB limit.
+`internal/executor/request.go` builds authenticated HTTP requests via the `Credentials` interface (implemented by `internal/auth.Resolver`: `x-api-key` header for API keys, `Authorization: Bearer` for OAuth sessions, with proactive refresh and a one-shot 401 refresh-replay in `DoWithReauth`). `dryrun.go` outputs the equivalent curl command when `--dry-run` is used. `upload.go` handles S3 presigned-URL uploads with a 500MB limit.
+
+### Authentication
+
+`internal/auth` implements OAuth sign-in against WorkOS AuthKit using the RFC 8628 device flow (`device.go`), an on-disk session store keyed by OAuth domain (`store.go`, `credentials.json` under `os.UserConfigDir()/wherobots/`, 0600, atomic writes), unverified JWT claim decoding for display (`jwt.go`), and the request-time credential resolver (`resolver.go`; env API key always beats a stored session). `auth login|logout|status` live in `internal/commands/auth.go` and are dispatched spec-free from `main.go` (see `commands.IsSpecFreeInvocation`), so they work with no credentials, cached spec, or API connectivity. Provisioning a new OAuth client is documented in `docs/oauth-setup.md`.
 
 ### Key Packages
 
