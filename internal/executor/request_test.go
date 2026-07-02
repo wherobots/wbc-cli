@@ -3,9 +3,14 @@ package executor
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"wherobots/cli/internal/auth"
 	"wherobots/cli/internal/config"
 	"wherobots/cli/internal/spec"
 )
@@ -143,10 +148,39 @@ func TestJSONErrorFallsBackOnNonJSONBody(t *testing.T) {
 	}
 }
 
+// fakeCreds is a scriptable Credentials implementation. The real resolver's
+// behavior is covered by internal/auth tests.
+type fakeCreds struct {
+	header       string // header name to set
+	value        string
+	applyErr     error
+	refreshOK    bool
+	refreshErr   error
+	applyCalls   int
+	refreshCalls int
+}
+
+func (f *fakeCreds) Apply(_ context.Context, req *http.Request) error {
+	f.applyCalls++
+	if f.applyErr != nil {
+		return f.applyErr
+	}
+	req.Header.Set(f.header, f.value)
+	return nil
+}
+
+func (f *fakeCreds) ForceRefresh(_ context.Context) (bool, error) {
+	f.refreshCalls++
+	return f.refreshOK, f.refreshErr
+}
+
+func apiKeyCreds(key string) *fakeCreds {
+	return &fakeCreds{header: "x-api-key", value: key}
+}
+
 func TestBuildRequestInjectsPathQueryBodyAndAuth(t *testing.T) {
 	t.Parallel()
 
-	cfg := config.Config{APIKey: "abc123"}
 	runtimeSpec := &spec.RuntimeSpec{BaseURL: "https://api.example.com"}
 	op := &spec.Operation{
 		Method:         "POST",
@@ -163,7 +197,7 @@ func TestBuildRequestInjectsPathQueryBodyAndAuth(t *testing.T) {
 
 	req, err := BuildRequest(
 		context.Background(),
-		cfg,
+		apiKeyCreds("abc123"),
 		runtimeSpec,
 		op,
 		[]string{"u-1"},
@@ -190,7 +224,7 @@ func TestBuildRequestInjectsWherobotsClientHeader(t *testing.T) {
 	Version = "1.2.3"
 	t.Cleanup(func() { Version = prev })
 
-	cfg := config.Config{APIKey: "abc123"}
+	creds := apiKeyCreds("abc123")
 	runtimeSpec := &spec.RuntimeSpec{BaseURL: "https://api.example.com"}
 	op := &spec.Operation{
 		Method:      "GET",
@@ -198,7 +232,7 @@ func TestBuildRequestInjectsWherobotsClientHeader(t *testing.T) {
 		CommandPath: []string{"job-runs", "list"},
 	}
 
-	req, err := BuildRequest(context.Background(), cfg, runtimeSpec, op, nil, nil, "")
+	req, err := BuildRequest(context.Background(), creds, runtimeSpec, op, nil, nil, "")
 	if err != nil {
 		t.Fatalf("BuildRequest() error = %v", err)
 	}
@@ -213,7 +247,7 @@ func TestBuildRequestClientHeaderPrefersContextCommand(t *testing.T) {
 	Version = "1.2.3"
 	t.Cleanup(func() { Version = prev })
 
-	cfg := config.Config{APIKey: "abc123"}
+	creds := apiKeyCreds("abc123")
 	runtimeSpec := &spec.RuntimeSpec{BaseURL: "https://api.example.com"}
 	// op.CommandPath is the shared api-tree name; the context override must win.
 	op := &spec.Operation{
@@ -223,7 +257,7 @@ func TestBuildRequestClientHeaderPrefersContextCommand(t *testing.T) {
 	}
 
 	ctx := WithCommand(context.Background(), "job-runs.create")
-	req, err := BuildRequest(ctx, cfg, runtimeSpec, op, nil, nil, `{}`)
+	req, err := BuildRequest(ctx, creds, runtimeSpec, op, nil, nil, `{}`)
 	if err != nil {
 		t.Fatalf("BuildRequest() error = %v", err)
 	}
@@ -238,7 +272,7 @@ func TestBuildRequestClientHeaderFallsBackToCommandPathWithoutContext(t *testing
 	Version = "1.2.3"
 	t.Cleanup(func() { Version = prev })
 
-	cfg := config.Config{APIKey: "abc123"}
+	creds := apiKeyCreds("abc123")
 	runtimeSpec := &spec.RuntimeSpec{BaseURL: "https://api.example.com"}
 	op := &spec.Operation{
 		Method:      "POST",
@@ -247,7 +281,7 @@ func TestBuildRequestClientHeaderFallsBackToCommandPathWithoutContext(t *testing
 	}
 
 	// No context command set: fall back to op.CommandPath.
-	req, err := BuildRequest(context.Background(), cfg, runtimeSpec, op, nil, nil, `{}`)
+	req, err := BuildRequest(context.Background(), creds, runtimeSpec, op, nil, nil, `{}`)
 	if err != nil {
 		t.Fatalf("BuildRequest() error = %v", err)
 	}
@@ -262,11 +296,11 @@ func TestBuildRequestWherobotsClientHeaderOmitsCommandWhenEmpty(t *testing.T) {
 	Version = "4.5.6"
 	t.Cleanup(func() { Version = prev })
 
-	cfg := config.Config{APIKey: "abc123"}
+	creds := apiKeyCreds("abc123")
 	runtimeSpec := &spec.RuntimeSpec{BaseURL: "https://api.example.com"}
 	op := &spec.Operation{Method: "GET", Path: "/job-runs"}
 
-	req, err := BuildRequest(context.Background(), cfg, runtimeSpec, op, nil, nil, "")
+	req, err := BuildRequest(context.Background(), creds, runtimeSpec, op, nil, nil, "")
 	if err != nil {
 		t.Fatalf("BuildRequest() error = %v", err)
 	}
@@ -321,10 +355,25 @@ func TestBuildClientHeader(t *testing.T) {
 	}
 }
 
+func TestBuildRequestUsesResolverForOAuthBearer(t *testing.T) {
+	t.Parallel()
+
+	runtimeSpec := &spec.RuntimeSpec{BaseURL: "https://api.example.com"}
+	op := &spec.Operation{Method: "GET", Path: "/users"}
+
+	creds := &fakeCreds{header: "Authorization", value: "Bearer token-1"}
+	req, err := BuildRequest(context.Background(), creds, runtimeSpec, op, nil, nil, "")
+	if err != nil {
+		t.Fatalf("BuildRequest() error = %v", err)
+	}
+	if got := req.Header.Get("Authorization"); got != "Bearer token-1" {
+		t.Fatalf("Authorization = %q", got)
+	}
+}
+
 func TestBuildRequestMissingRequiredQueryReturnsError(t *testing.T) {
 	t.Parallel()
 
-	cfg := config.Config{APIKey: "abc123"}
 	runtimeSpec := &spec.RuntimeSpec{BaseURL: "https://api.example.com"}
 	op := &spec.Operation{
 		Method:      "GET",
@@ -332,21 +381,153 @@ func TestBuildRequestMissingRequiredQueryReturnsError(t *testing.T) {
 		QueryParams: []spec.Parameter{{Name: "limit", Location: "query", Required: true}},
 	}
 
-	_, err := BuildRequest(context.Background(), cfg, runtimeSpec, op, nil, nil, "")
+	_, err := BuildRequest(context.Background(), apiKeyCreds("abc123"), runtimeSpec, op, nil, nil, "")
 	if err == nil || !strings.Contains(err.Error(), `missing required query parameter "limit"`) {
 		t.Fatalf("expected required query error, got %v", err)
 	}
 }
 
-func TestBuildRequestMissingAPIKeyReturnsError(t *testing.T) {
+func TestBuildRequestNoCredentialsReturnsResolverError(t *testing.T) {
 	t.Parallel()
 
-	cfg := config.Config{}
 	runtimeSpec := &spec.RuntimeSpec{BaseURL: "https://api.example.com"}
 	op := &spec.Operation{Method: "GET", Path: "/users"}
 
-	_, err := BuildRequest(context.Background(), cfg, runtimeSpec, op, nil, nil, "")
-	if err == nil || !strings.Contains(err.Error(), "WHEROBOTS_API_KEY") {
-		t.Fatalf("expected API key error, got %v", err)
+	creds := &fakeCreds{applyErr: errors.New("no credentials found")}
+	_, err := BuildRequest(context.Background(), creds, runtimeSpec, op, nil, nil, "")
+	if err == nil || !strings.Contains(err.Error(), "no credentials found") {
+		t.Fatalf("expected credential error, got %v", err)
+	}
+}
+
+func TestBuildRequestRealResolverErrorMentionsBothCredentialRoutes(t *testing.T) {
+	t.Parallel()
+
+	runtimeSpec := &spec.RuntimeSpec{BaseURL: "https://api.example.com"}
+	op := &spec.Operation{Method: "GET", Path: "/users"}
+
+	resolver := auth.NewResolver(config.Config{
+		OpenAPIURL:      "https://api.cloud.wherobots.com/openapi.json",
+		OAuthDomain:     "https://login.cloud.wherobots.com",
+		CredentialsPath: filepath.Join(t.TempDir(), "credentials.json"),
+	})
+	_, err := BuildRequest(context.Background(), resolver, runtimeSpec, op, nil, nil, "")
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	for _, want := range []string{"WHEROBOTS_API_KEY", "wherobots auth login"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error should contain %q, got: %v", want, err)
+		}
+	}
+}
+
+func TestDoWithReauthReplaysOnceAfter401(t *testing.T) {
+	t.Parallel()
+
+	var calls int
+	var authHeaders, bodies []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		body, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(body))
+		authHeaders = append(authHeaders, r.Header.Get("Authorization"))
+		if calls == 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	creds := &fakeCreds{header: "Authorization", value: "Bearer stale", refreshOK: true}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL, strings.NewReader(`{"name":"alice"}`))
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	if applyErr := creds.Apply(req.Context(), req); applyErr != nil {
+		t.Fatalf("Apply() error = %v", applyErr)
+	}
+	creds.value = "Bearer fresh" // what the refresh would install
+
+	body, err := DoWithReauth(server.Client(), req, creds)
+	if err != nil {
+		t.Fatalf("DoWithReauth() error = %v", err)
+	}
+	if string(body) != `{"ok":true}` {
+		t.Fatalf("body = %s", body)
+	}
+	if creds.refreshCalls != 1 {
+		t.Fatalf("refreshCalls = %d, want 1", creds.refreshCalls)
+	}
+	if calls != 2 {
+		t.Fatalf("server calls = %d, want 2", calls)
+	}
+	if authHeaders[1] != "Bearer fresh" {
+		t.Fatalf("replay Authorization = %q, want fresh bearer", authHeaders[1])
+	}
+	if bodies[1] != `{"name":"alice"}` {
+		t.Fatalf("replay body = %q, want original body re-sent", bodies[1])
+	}
+}
+
+func TestDoWithReauthDoesNotReplayForAPIKey(t *testing.T) {
+	t.Parallel()
+
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	creds := apiKeyCreds("key-1") // ForceRefresh reports false: nothing to refresh
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
+
+	_, err := DoWithReauth(server.Client(), req, creds)
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("err = %v, want the original 401", err)
+	}
+	if calls != 1 {
+		t.Fatalf("server calls = %d, want 1 (no replay)", calls)
+	}
+}
+
+func TestDoWithReauthSurfacesRefreshError(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	creds := &fakeCreds{header: "Authorization", value: "Bearer stale", refreshErr: errors.New("session has expired")}
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
+
+	_, err := DoWithReauth(server.Client(), req, creds)
+	if err == nil || !strings.Contains(err.Error(), "session has expired") {
+		t.Fatalf("err = %v, want actionable refresh error", err)
+	}
+}
+
+func TestDoWithReauthPassesThroughNon401Errors(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	creds := &fakeCreds{header: "Authorization", value: "Bearer t", refreshOK: true}
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
+
+	_, err := DoWithReauth(server.Client(), req, creds)
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("err = %v, want HTTP 500 passthrough", err)
+	}
+	if creds.refreshCalls != 0 {
+		t.Fatalf("refreshCalls = %d, want 0", creds.refreshCalls)
 	}
 }

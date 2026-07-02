@@ -22,3 +22,20 @@ func TestRenderCurlIsDeterministicAndMasksToken(t *testing.T) {
 		t.Fatalf("RenderCurl() = %q\nwant = %q", out, expected)
 	}
 }
+
+func TestRenderCurlMasksBearerToken(t *testing.T) {
+	t.Parallel()
+
+	req, err := http.NewRequest(http.MethodGet, "https://api.example.com/users/me", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer eyJhbGciOi.secret.payload")
+	req.Header.Set("Accept", "application/json")
+
+	out := RenderCurl(req, "")
+	expected := "curl -X GET 'https://api.example.com/users/me' -H 'Accept: application/json' -H 'Authorization: Bearer <access-token>'"
+	if out != expected {
+		t.Fatalf("RenderCurl() = %q\nwant = %q", out, expected)
+	}
+}

@@ -12,14 +12,22 @@ import (
 	"wherobots/cli/internal/config"
 )
 
+// Credentials optionally authenticates the spec download; implemented by
+// auth.Resolver.
+type Credentials interface {
+	Apply(ctx context.Context, req *http.Request) error
+}
+
 type Loader struct {
 	cfg    config.Config
+	creds  Credentials
 	client *http.Client
 }
 
-func NewLoader(cfg config.Config) *Loader {
+func NewLoader(cfg config.Config, creds Credentials) *Loader {
 	return &Loader{
-		cfg: cfg,
+		cfg:   cfg,
+		creds: creds,
 		client: &http.Client{
 			Timeout: cfg.HTTPTimeout,
 		},
@@ -64,8 +72,10 @@ func (l *Loader) download(ctx context.Context, sourceURL string) ([]byte, error)
 	if err != nil {
 		return nil, fmt.Errorf("build spec request: %w", err)
 	}
-	if l.cfg.APIKey != "" {
-		req.Header.Set("x-api-key", l.cfg.APIKey)
+	// Best-effort auth: the spec endpoint is fetchable anonymously, and the
+	// loader must never block credential-free commands like `auth login`.
+	if l.creds != nil {
+		_ = l.creds.Apply(ctx, req)
 	}
 	resp, err := l.client.Do(req)
 	if err != nil {

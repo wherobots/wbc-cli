@@ -11,7 +11,6 @@ import (
 
 	"github.com/tidwall/gjson"
 
-	"wherobots/cli/internal/config"
 	"wherobots/cli/internal/spec"
 )
 
@@ -216,9 +215,21 @@ func (e *JSONError) Unwrap() error {
 	return e.httpErr
 }
 
+// Credentials applies auth to outgoing requests and recovers from a 401 by
+// refreshing. Implemented by auth.Resolver; declared here so the executor
+// stays decoupled from credential storage.
+type Credentials interface {
+	// Apply sets the auth header, refreshing stored credentials first when
+	// needed. It fails when no credential is configured at all.
+	Apply(ctx context.Context, req *http.Request) error
+	// ForceRefresh refreshes unconditionally after a 401 and reports whether
+	// a replay with fresh credentials is worthwhile.
+	ForceRefresh(ctx context.Context) (bool, error)
+}
+
 func BuildRequest(
 	ctx context.Context,
-	cfg config.Config,
+	creds Credentials,
 	runtimeSpec *spec.RuntimeSpec,
 	op *spec.Operation,
 	pathArgs []string,
@@ -230,9 +241,6 @@ func BuildRequest(
 	}
 	if runtimeSpec.BaseURL == "" {
 		return nil, fmt.Errorf("missing base URL (no OpenAPI servers and WHEROBOTS_API_URL has no resolvable host)")
-	}
-	if err := cfg.RequireAPIKey(); err != nil {
-		return nil, err
 	}
 	if len(pathArgs) != len(op.PathParamOrder) {
 		return nil, fmt.Errorf("expected %d path arguments, got %d", len(op.PathParamOrder), len(pathArgs))
@@ -304,7 +312,6 @@ func BuildRequest(
 		}
 		req.Header.Set("Content-Type", contentType)
 	}
-	req.Header.Set("x-api-key", cfg.APIKey)
 	// Prefer the invoked command name carried on the context (set by curated
 	// commands whose shared op.CommandPath is the api-tree name); fall back to
 	// the operation's own CommandPath for dynamic api commands.
@@ -313,6 +320,9 @@ func BuildRequest(
 		command = strings.Join(op.CommandPath, ".")
 	}
 	req.Header.Set(clientHeaderName, buildClientHeader(Version, command))
+	if err := creds.Apply(ctx, req); err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -332,4 +342,37 @@ func Do(client *http.Client, req *http.Request) ([]byte, error) {
 		return nil, &HTTPError{StatusCode: resp.StatusCode, Body: body}
 	}
 	return body, nil
+}
+
+// DoWithReauth executes the request and, on a 401 with refreshable
+// credentials, forces one refresh and replays the request once. API-key 401s
+// are terminal (there is nothing to refresh).
+func DoWithReauth(client *http.Client, req *http.Request, creds Credentials) ([]byte, error) {
+	body, err := Do(client, req)
+	var httpErr *HTTPError
+	if err == nil || !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusUnauthorized {
+		return body, err
+	}
+
+	ok, refreshErr := creds.ForceRefresh(req.Context())
+	if refreshErr != nil {
+		// "Session expired — sign in again" beats a bare 401.
+		return nil, refreshErr
+	}
+	if !ok {
+		return body, err
+	}
+
+	retry := req.Clone(req.Context())
+	if req.GetBody != nil {
+		retryBody, bodyErr := req.GetBody()
+		if bodyErr != nil {
+			return body, err
+		}
+		retry.Body = retryBody
+	}
+	if applyErr := creds.Apply(retry.Context(), retry); applyErr != nil {
+		return nil, applyErr
+	}
+	return Do(client, retry)
 }

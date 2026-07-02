@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"wherobots/cli/internal/auth"
 	"wherobots/cli/internal/config"
 	"wherobots/cli/internal/executor"
 	"wherobots/cli/internal/spec"
@@ -26,7 +27,7 @@ func TestRootTreeOutput(t *testing.T) {
 		},
 	}
 
-	root := BuildRootCommand(cfg, runtimeSpec)
+	root := BuildRootCommand(cfg, auth.NewResolver(cfg), runtimeSpec)
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
@@ -58,7 +59,7 @@ func TestTreeShowsSummaryOnLeafNodes(t *testing.T) {
 		},
 	}
 
-	root := BuildRootCommand(cfg, runtimeSpec)
+	root := BuildRootCommand(cfg, auth.NewResolver(cfg), runtimeSpec)
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
@@ -97,7 +98,7 @@ func TestDescriptionAppearsInHelp(t *testing.T) {
 		},
 	}
 
-	root := BuildRootCommand(cfg, runtimeSpec)
+	root := BuildRootCommand(cfg, auth.NewResolver(cfg), runtimeSpec)
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
@@ -126,7 +127,7 @@ func TestExcludedOperationsAbsentFromTree(t *testing.T) {
 		},
 	}
 
-	root := BuildRootCommand(cfg, runtimeSpec)
+	root := BuildRootCommand(cfg, auth.NewResolver(cfg), runtimeSpec)
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
@@ -168,7 +169,7 @@ func TestDryRunOutputsCurl(t *testing.T) {
 		},
 	}
 
-	root := BuildRootCommand(cfg, runtimeSpec)
+	root := BuildRootCommand(cfg, auth.NewResolver(cfg), runtimeSpec)
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
@@ -207,7 +208,7 @@ func TestInvalidArgsReturnsUsageHint(t *testing.T) {
 		},
 	}
 
-	root := BuildRootCommand(cfg, runtimeSpec)
+	root := BuildRootCommand(cfg, auth.NewResolver(cfg), runtimeSpec)
 	root.SetOut(&bytes.Buffer{})
 	root.SetErr(&bytes.Buffer{})
 	root.SetArgs([]string{"api", "users", "get"})
@@ -248,7 +249,7 @@ func TestObjectBodyFieldSerializesAsJSONObject(t *testing.T) {
 		},
 	}
 
-	root := BuildRootCommand(cfg, runtimeSpec)
+	root := BuildRootCommand(cfg, auth.NewResolver(cfg), runtimeSpec)
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
@@ -294,7 +295,7 @@ func TestHelpShowsTypedFlagSamples(t *testing.T) {
 		},
 	}
 
-	root := BuildRootCommand(cfg, runtimeSpec)
+	root := BuildRootCommand(cfg, auth.NewResolver(cfg), runtimeSpec)
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
@@ -332,7 +333,7 @@ func TestAPICommandErrorReturnsRawJSONEnvelope(t *testing.T) {
 		},
 	}
 
-	root := BuildRootCommand(cfg, runtimeSpec)
+	root := BuildRootCommand(cfg, auth.NewResolver(cfg), runtimeSpec)
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
