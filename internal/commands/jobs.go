@@ -41,6 +41,7 @@ var terminalStatuses = map[string]struct{}{
 
 type jobsRunner struct {
 	cfg             config.Config
+	creds           executor.Credentials
 	runtime         *spec.RuntimeSpec
 	client          *http.Client
 	flags           *GlobalFlags
@@ -57,8 +58,8 @@ type jobsRunner struct {
 	listRuns        *spec.Operation
 }
 
-func addJobsCustomCommands(root *cobra.Command, cfg config.Config, runtimeSpec *spec.RuntimeSpec, client *http.Client, flags *GlobalFlags) {
-	runner, ok := newJobsRunner(cfg, runtimeSpec, client, flags)
+func addJobsCustomCommands(root *cobra.Command, cfg config.Config, creds executor.Credentials, runtimeSpec *spec.RuntimeSpec, client *http.Client, flags *GlobalFlags) {
+	runner, ok := newJobsRunner(cfg, creds, runtimeSpec, client, flags)
 	if !ok {
 		return
 	}
@@ -93,13 +94,14 @@ func addJobsCustomCommands(root *cobra.Command, cfg config.Config, runtimeSpec *
 	root.AddCommand(jobsCmd)
 }
 
-func newJobsRunner(cfg config.Config, runtimeSpec *spec.RuntimeSpec, client *http.Client, flags *GlobalFlags) (*jobsRunner, bool) {
+func newJobsRunner(cfg config.Config, creds executor.Credentials, runtimeSpec *spec.RuntimeSpec, client *http.Client, flags *GlobalFlags) (*jobsRunner, bool) {
 	if runtimeSpec == nil {
 		return nil, false
 	}
 
 	r := &jobsRunner{
 		cfg:             cfg,
+		creds:           creds,
 		runtime:         runtimeSpec,
 		client:          client,
 		flags:           flags,
@@ -1141,11 +1143,11 @@ func (r *jobsRunner) fetchForCompletion(cmd *cobra.Command, op *spec.Operation) 
 }
 
 func (r *jobsRunner) execOnce(ctx context.Context, op *spec.Operation, pathArgs []string, query []executor.QueryPair, body string) ([]byte, error) {
-	req, err := executor.BuildRequest(ctx, r.cfg, r.runtime, op, pathArgs, query, body)
+	req, err := executor.BuildRequest(ctx, r.creds, r.runtime, op, pathArgs, query, body)
 	if err != nil {
 		return nil, err
 	}
-	return executor.Do(r.client, req)
+	return executor.DoWithReauth(r.client, req, r.creds)
 }
 
 // executeOrDryRun routes the request through execWithRetry, unless the global
@@ -1154,7 +1156,7 @@ func (r *jobsRunner) execOnce(ctx context.Context, op *spec.Operation, pathArgs 
 // parsing a missing response.
 func (r *jobsRunner) executeOrDryRun(ctx context.Context, w io.Writer, op *spec.Operation, pathArgs []string, query []executor.QueryPair, body string) ([]byte, error) {
 	if r.flags != nil && r.flags.DryRun {
-		req, err := executor.BuildRequest(ctx, r.cfg, r.runtime, op, pathArgs, query, body)
+		req, err := executor.BuildRequest(ctx, r.creds, r.runtime, op, pathArgs, query, body)
 		if err != nil {
 			return nil, err
 		}

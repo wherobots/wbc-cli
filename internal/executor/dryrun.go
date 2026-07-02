@@ -40,6 +40,9 @@ func sanitizeHeaderValue(key, value string) string {
 	if strings.EqualFold(key, "x-api-key") && value != "" {
 		return "$WHEROBOTS_API_KEY"
 	}
+	if strings.EqualFold(key, "authorization") && value != "" {
+		return "Bearer <access-token>"
+	}
 	return value
 }
 

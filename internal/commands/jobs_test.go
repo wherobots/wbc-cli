@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"wherobots/cli/internal/auth"
 	"wherobots/cli/internal/config"
 	"wherobots/cli/internal/spec"
 )
@@ -1085,7 +1086,7 @@ func TestCompleteRuntimesSkipsDisabled(t *testing.T) {
 
 func newJobsRunnerForTest(baseURL string) *jobsRunner {
 	cfg := config.Config{AppName: "wherobots", APIKey: "test-key", HTTPTimeout: time.Second}
-	runner, _ := newJobsRunner(cfg, jobsTestRuntimeSpec(baseURL), http.DefaultClient, nil)
+	runner, _ := newJobsRunner(cfg, auth.NewResolver(cfg), jobsTestRuntimeSpec(baseURL), http.DefaultClient, nil)
 	return runner
 }
 
@@ -1114,7 +1115,7 @@ func buildJobsTestRootWithConfig(baseURL string, mutate func(*config.Config)) *c
 	if mutate != nil {
 		mutate(&cfg)
 	}
-	return BuildRootCommand(cfg, jobsTestRuntimeSpec(baseURL))
+	return BuildRootCommand(cfg, auth.NewResolver(cfg), jobsTestRuntimeSpec(baseURL))
 }
 
 func jobsTestRuntimeSpec(baseURL string) *spec.RuntimeSpec {

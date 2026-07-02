@@ -48,7 +48,7 @@ type bodyBinding struct {
 	Fields     []bodyFieldBinding
 }
 
-func BuildRootCommand(cfg config.Config, runtimeSpec *spec.RuntimeSpec) *cobra.Command {
+func BuildRootCommand(cfg config.Config, creds executor.Credentials, runtimeSpec *spec.RuntimeSpec) *cobra.Command {
 	flags := &GlobalFlags{}
 	client := &http.Client{Timeout: cfg.HTTPTimeout}
 	operationByCommand := map[*cobra.Command]*spec.Operation{}
@@ -108,12 +108,12 @@ func BuildRootCommand(cfg config.Config, runtimeSpec *spec.RuntimeSpec) *cobra.C
 		op.Verb = verb
 		op.CommandPath = append(PathToResourceSegments(op.Path), verb)
 
-		methodCommand := buildOperationCommand(op, flags, cfg, runtimeSpec, client, printTree)
+		methodCommand := buildOperationCommand(op, flags, creds, runtimeSpec, client, printTree)
 		operationByCommand[methodCommand] = op
 		parent.AddCommand(methodCommand)
 	}
 
-	addJobsCustomCommands(root, cfg, runtimeSpec, client, flags)
+	addJobsCustomCommands(root, cfg, creds, runtimeSpec, client, flags)
 
 	return root
 }
@@ -121,7 +121,7 @@ func BuildRootCommand(cfg config.Config, runtimeSpec *spec.RuntimeSpec) *cobra.C
 func buildOperationCommand(
 	op *spec.Operation,
 	flags *GlobalFlags,
-	cfg config.Config,
+	creds executor.Credentials,
 	runtimeSpec *spec.RuntimeSpec,
 	client *http.Client,
 	printTree func(cmd *cobra.Command) error,
@@ -184,7 +184,7 @@ func buildOperationCommand(
 			return hints.Wrap(op, err)
 		}
 
-		req, err := executor.BuildRequest(cmd.Context(), cfg, runtimeSpec, op, pathArgs, queryPairs, body)
+		req, err := executor.BuildRequest(cmd.Context(), creds, runtimeSpec, op, pathArgs, queryPairs, body)
 		if err != nil {
 			return hints.Wrap(op, err)
 		}
@@ -194,7 +194,7 @@ func buildOperationCommand(
 			return err
 		}
 
-		respBody, err := executor.Do(client, req)
+		respBody, err := executor.DoWithReauth(client, req, creds)
 		if err != nil {
 			// api commands are machine-oriented: surface the API error
 			// envelope as raw JSON instead of the human-readable rendering.

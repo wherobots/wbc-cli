@@ -22,17 +22,28 @@ const (
 	envWherobotsUploadPath = "WHEROBOTS_UPLOAD_PATH"
 	envOpenAPICacheTTL     = "OPENAPI_CACHE_TTL"
 	envHTTPTimeout         = "OPENAPI_HTTP_TIMEOUT"
+
+	// OAuth sign-in (WorkOS AuthKit device flow). The defaults target
+	// production; point both env vars at another tenant (e.g. staging) to
+	// sign in there, mirroring how WHEROBOTS_API_URL selects the API host.
+	defaultOAuthDomain   = "https://login.cloud.wherobots.com"
+	defaultOAuthClientID = "client_01KWJ9Z6GR1HQJCQZ71NWC28JM" // dedicated CLI Connect client; public, safe to ship
+	envOAuthDomain       = "WHEROBOTS_OAUTH_DOMAIN"
+	envOAuthClientID     = "WHEROBOTS_OAUTH_CLIENT_ID"
 )
 
 type Config struct {
-	AppName     string
-	OpenAPIURL  string
-	APIKey      string
-	CachePath   string
-	CacheMeta   string
-	CacheTTL    time.Duration
-	HTTPTimeout time.Duration
-	UploadPath  string
+	AppName         string
+	OpenAPIURL      string
+	APIKey          string
+	CachePath       string
+	CacheMeta       string
+	CacheTTL        time.Duration
+	HTTPTimeout     time.Duration
+	UploadPath      string
+	OAuthDomain     string
+	OAuthClientID   string
+	CredentialsPath string
 }
 
 func Load() (Config, error) {
@@ -63,28 +74,34 @@ func Load() (Config, error) {
 
 	uploadPath := strings.TrimSpace(os.Getenv(envWherobotsUploadPath))
 
+	configRoot, err := os.UserConfigDir()
+	if err != nil {
+		return Config{}, fmt.Errorf("resolve user config dir: %w", err)
+	}
+
 	return Config{
-		AppName:     appName,
-		OpenAPIURL:  openAPIURL,
-		APIKey:      apiKey,
-		CachePath:   filepath.Join(cacheDir, "spec-"+cacheKey+".json"),
-		CacheMeta:   filepath.Join(cacheDir, "spec-"+cacheKey+".meta.json"),
-		CacheTTL:    ttl,
-		HTTPTimeout: timeout,
-		UploadPath:  uploadPath,
+		AppName:         appName,
+		OpenAPIURL:      openAPIURL,
+		APIKey:          apiKey,
+		CachePath:       filepath.Join(cacheDir, "spec-"+cacheKey+".json"),
+		CacheMeta:       filepath.Join(cacheDir, "spec-"+cacheKey+".meta.json"),
+		CacheTTL:        ttl,
+		HTTPTimeout:     timeout,
+		UploadPath:      uploadPath,
+		OAuthDomain:     envDefaultTrimmed(envOAuthDomain, defaultOAuthDomain),
+		OAuthClientID:   envDefaultTrimmed(envOAuthClientID, defaultOAuthClientID),
+		CredentialsPath: filepath.Join(configRoot, appName, "credentials.json"),
 	}, nil
 }
 
-// RequireAPIKey returns an error with setup instructions when the API key is
-// empty, or nil when a key is present.
-func (c Config) RequireAPIKey() error {
-	if c.APIKey != "" {
-		return nil
+// envDefaultTrimmed reads an env var, trims surrounding whitespace and any
+// trailing slash, and falls back to the default when the result is blank.
+func envDefaultTrimmed(key, fallback string) string {
+	value := strings.TrimRight(strings.TrimSpace(os.Getenv(key)), "/")
+	if value == "" {
+		return fallback
 	}
-	return fmt.Errorf(
-		"%s is required\n\nTo create an API key, visit: %s\nThen export it:\n\n  export %s='<your-api-key>'",
-		envWherobotsAPIKey, apiKeyURL(c.OpenAPIURL), envWherobotsAPIKey,
-	)
+	return value
 }
 
 // urlCacheKey returns a short hex string derived from the URL so that
@@ -142,10 +159,10 @@ func parseDuration(raw string, fallback time.Duration) (time.Duration, error) {
 	return d, nil
 }
 
-// apiKeyURL derives the console settings URL from the resolved OpenAPI spec URL.
+// APIKeyURL derives the console settings URL from the resolved OpenAPI spec URL.
 // It strips the "api." prefix from the host (e.g. api.cloud.wherobots.com → cloud.wherobots.com)
 // and appends /settings#api-keys.
-func apiKeyURL(openAPISpecURL string) string {
+func APIKeyURL(openAPISpecURL string) string {
 	parsed, err := url.Parse(openAPISpecURL)
 	if err != nil {
 		return "https://cloud.wherobots.com/settings#api-keys"

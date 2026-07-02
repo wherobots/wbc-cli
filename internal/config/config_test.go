@@ -1,6 +1,7 @@
 package config
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -54,32 +55,79 @@ func TestLoadSucceedsWithoutAPIKey(t *testing.T) {
 	}
 }
 
-func TestRequireAPIKeyErrorsWithDefaultURL(t *testing.T) {
-	cfg := Config{OpenAPIURL: "https://api.cloud.wherobots.com/openapi.json"}
-	err := cfg.RequireAPIKey()
-	if err == nil {
-		t.Fatalf("expected error")
-	}
-	if !strings.Contains(err.Error(), "https://cloud.wherobots.com/settings#api-keys") {
-		t.Fatalf("error should contain default API key URL, got: %v", err)
+func TestAPIKeyURLDerivedFromDefaultURL(t *testing.T) {
+	got := APIKeyURL("https://api.cloud.wherobots.com/openapi.json")
+	if got != "https://cloud.wherobots.com/settings#api-keys" {
+		t.Fatalf("APIKeyURL = %q", got)
 	}
 }
 
-func TestRequireAPIKeyErrorsWithCustomURL(t *testing.T) {
-	cfg := Config{OpenAPIURL: "https://api.staging.wherobots.com/openapi.json"}
-	err := cfg.RequireAPIKey()
-	if err == nil {
-		t.Fatalf("expected error")
-	}
-	if !strings.Contains(err.Error(), "https://staging.wherobots.com/settings#api-keys") {
-		t.Fatalf("error should contain custom API key URL, got: %v", err)
+func TestAPIKeyURLDerivedFromCustomURL(t *testing.T) {
+	got := APIKeyURL("https://api.staging.wherobots.com/openapi.json")
+	if got != "https://staging.wherobots.com/settings#api-keys" {
+		t.Fatalf("APIKeyURL = %q", got)
 	}
 }
 
-func TestRequireAPIKeySucceedsWithKey(t *testing.T) {
-	cfg := Config{APIKey: "key-1"}
-	if err := cfg.RequireAPIKey(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestLoadDefaultsOAuthConfig(t *testing.T) {
+	t.Setenv("WHEROBOTS_API_URL", "")
+	t.Setenv("WHEROBOTS_API_KEY", "")
+	t.Setenv("WHEROBOTS_OAUTH_DOMAIN", "")
+	t.Setenv("WHEROBOTS_OAUTH_CLIENT_ID", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.OAuthDomain != "https://login.cloud.wherobots.com" {
+		t.Fatalf("OAuthDomain = %q", cfg.OAuthDomain)
+	}
+	if cfg.OAuthClientID == "" {
+		t.Fatalf("OAuthClientID should have a baked-in default")
+	}
+}
+
+func TestLoadOAuthEnvOverridesAreTrimmed(t *testing.T) {
+	t.Setenv("WHEROBOTS_OAUTH_DOMAIN", "  https://staging.authkit.example/  ")
+	t.Setenv("WHEROBOTS_OAUTH_CLIENT_ID", " client_staging_123 ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.OAuthDomain != "https://staging.authkit.example" {
+		t.Fatalf("OAuthDomain = %q", cfg.OAuthDomain)
+	}
+	if cfg.OAuthClientID != "client_staging_123" {
+		t.Fatalf("OAuthClientID = %q", cfg.OAuthClientID)
+	}
+}
+
+func TestLoadBlankOAuthOverridesFallBackToDefaults(t *testing.T) {
+	t.Setenv("WHEROBOTS_OAUTH_DOMAIN", "   ")
+	t.Setenv("WHEROBOTS_OAUTH_CLIENT_ID", "   ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.OAuthDomain != "https://login.cloud.wherobots.com" {
+		t.Fatalf("OAuthDomain = %q", cfg.OAuthDomain)
+	}
+}
+
+func TestLoadResolvesCredentialsPath(t *testing.T) {
+	t.Setenv("WHEROBOTS_API_KEY", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.CredentialsPath == "" {
+		t.Fatalf("CredentialsPath should be set")
+	}
+	if !strings.HasSuffix(cfg.CredentialsPath, filepath.Join("wherobots", "credentials.json")) {
+		t.Fatalf("CredentialsPath = %q, want .../wherobots/credentials.json", cfg.CredentialsPath)
 	}
 }
 
