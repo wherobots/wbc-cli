@@ -120,6 +120,8 @@ func execAuth(t *testing.T, cfg config.Config, creds *auth.Resolver, args ...str
 }
 
 func TestAuthLoginHappyPath(t *testing.T) {
+	// Not parallel: the login tests share the package-level openBrowser via
+	// stubBrowser, so running them concurrently would race on that var.
 	fake := newFakeAuthKit(t, testAccessToken(t, "clay@wherobots.com"), 1)
 	cfg := authTestConfig(t, fake.srv.URL)
 	opened := stubBrowser(t)

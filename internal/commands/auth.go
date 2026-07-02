@@ -3,6 +3,7 @@ package commands
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -179,7 +180,7 @@ func runLogout(cmd *cobra.Command, cfg config.Config, creds *auth.Resolver, all 
 
 // removeCorruptStore honors the user's explicit intent to clear credentials
 // even when the file cannot be parsed.
-func removeCorruptStore(out interface{ Write([]byte) (int, error) }, cfg config.Config) error {
+func removeCorruptStore(out io.Writer, cfg config.Config) error {
 	if err := os.Remove(cfg.CredentialsPath); err != nil {
 		return fmt.Errorf("remove corrupt credentials file: %w", err)
 	}
