@@ -86,6 +86,10 @@ func runLogin(cmd *cobra.Command, cfg config.Config, creds *auth.Resolver, noBro
 	out := cmd.OutOrStdout()
 	client := creds.OAuthClient()
 
+	if cfg.OAuthDomainLikelyMismatched() {
+		fmt.Fprintf(out, "Warning: WHEROBOTS_API_URL points at %s but the OAuth domain is the production default (%s).\nIf that API host uses a different tenant, set WHEROBOTS_OAUTH_DOMAIN before signing in.\n\n", apiBaseURL(cfg), cfg.OAuthDomain)
+	}
+
 	da, err := client.StartDeviceAuthorization(cmd.Context())
 	if err != nil {
 		return err

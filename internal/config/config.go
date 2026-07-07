@@ -54,13 +54,16 @@ func Load() (Config, error) {
 	}
 	apiKey := strings.TrimSpace(os.Getenv(envWherobotsAPIKey))
 
-	cacheRoot, err := os.UserCacheDir()
-	if err != nil {
-		return Config{}, fmt.Errorf("resolve user cache dir: %w", err)
+	// Like the credentials path below, an unresolvable user cache dir (e.g.
+	// HOME unset in a CI container) must not fail Load; the spec loader just
+	// skips caching when the paths are empty.
+	cachePath, cacheMeta := "", ""
+	if cacheRoot, err := os.UserCacheDir(); err == nil {
+		cacheDir := filepath.Join(cacheRoot, appName)
+		cacheKey := urlCacheKey(openAPIURL)
+		cachePath = filepath.Join(cacheDir, "spec-"+cacheKey+".json")
+		cacheMeta = filepath.Join(cacheDir, "spec-"+cacheKey+".meta.json")
 	}
-
-	cacheDir := filepath.Join(cacheRoot, appName)
-	cacheKey := urlCacheKey(openAPIURL)
 
 	ttl, err := parseTTL(os.Getenv(envOpenAPICacheTTL))
 	if err != nil {
@@ -74,24 +77,35 @@ func Load() (Config, error) {
 
 	uploadPath := strings.TrimSpace(os.Getenv(envWherobotsUploadPath))
 
-	configRoot, err := os.UserConfigDir()
-	if err != nil {
-		return Config{}, fmt.Errorf("resolve user config dir: %w", err)
+	// An unresolvable user config dir (e.g. HOME unset in a CI container)
+	// must not fail Load — API-key-only usage never touches the credentials
+	// file. CredentialsPath stays empty and the auth store reports the
+	// problem when credentials are actually needed.
+	credentialsPath := ""
+	if configRoot, err := os.UserConfigDir(); err == nil {
+		credentialsPath = filepath.Join(configRoot, appName, "credentials.json")
 	}
 
 	return Config{
 		AppName:         appName,
 		OpenAPIURL:      openAPIURL,
 		APIKey:          apiKey,
-		CachePath:       filepath.Join(cacheDir, "spec-"+cacheKey+".json"),
-		CacheMeta:       filepath.Join(cacheDir, "spec-"+cacheKey+".meta.json"),
+		CachePath:       cachePath,
+		CacheMeta:       cacheMeta,
 		CacheTTL:        ttl,
 		HTTPTimeout:     timeout,
 		UploadPath:      uploadPath,
 		OAuthDomain:     envDefaultTrimmed(envOAuthDomain, defaultOAuthDomain),
 		OAuthClientID:   envDefaultTrimmed(envOAuthClientID, defaultOAuthClientID),
-		CredentialsPath: filepath.Join(configRoot, appName, "credentials.json"),
+		CredentialsPath: credentialsPath,
 	}, nil
+}
+
+// OAuthDomainLikelyMismatched reports a custom API URL paired with the
+// default (production) OAuth domain: sign-in would target the production
+// tenant while API requests go elsewhere, which typically ends in 401s.
+func (c Config) OAuthDomainLikelyMismatched() bool {
+	return c.OpenAPIURL != defaultOpenAPISpec && c.OAuthDomain == defaultOAuthDomain
 }
 
 // envDefaultTrimmed reads an env var, trims surrounding whitespace and any
