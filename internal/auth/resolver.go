@@ -15,15 +15,6 @@ import (
 // VS Code extension's REFRESH_SKEW_MS.
 const refreshSkew = 2 * time.Minute
 
-// Source identifies which credential a request will use.
-type Source int
-
-const (
-	SourceNone Source = iota
-	SourceAPIKey
-	SourceOAuth
-)
-
 // Resolver picks the credential for outgoing requests. Precedence: the
 // WHEROBOTS_API_KEY env var always wins over a stored OAuth session, so CI
 // and scripts behave predictably (gh/aws convention — this intentionally
@@ -60,18 +51,6 @@ func (r *Resolver) OAuthClient() *Client {
 	return r.client
 }
 
-// Source reports which credential Apply would use, without side effects.
-func (r *Resolver) Source() Source {
-	if r.cfg.APIKey != "" {
-		return SourceAPIKey
-	}
-	session, err := r.store.Get(r.cfg.OAuthDomain)
-	if err == nil && session != nil {
-		return SourceOAuth
-	}
-	return SourceNone
-}
-
 // Apply sets the auth header on req, refreshing the stored session first
 // when it is inside the expiry skew.
 func (r *Resolver) Apply(ctx context.Context, req *http.Request) error {
@@ -80,11 +59,8 @@ func (r *Resolver) Apply(ctx context.Context, req *http.Request) error {
 		return nil
 	}
 
-	session, err := r.store.Get(r.cfg.OAuthDomain)
+	session, err := r.storedSession()
 	if err != nil {
-		if errors.Is(err, ErrCorruptStore) {
-			return fmt.Errorf("%w — run `wherobots auth login` to sign in again", err)
-		}
 		return err
 	}
 	if session == nil {
@@ -109,8 +85,11 @@ func (r *Resolver) ForceRefresh(ctx context.Context) (bool, error) {
 	if r.cfg.APIKey != "" {
 		return false, nil
 	}
-	session, err := r.store.Get(r.cfg.OAuthDomain)
-	if err != nil || session == nil {
+	session, err := r.storedSession()
+	if err != nil {
+		return false, err
+	}
+	if session == nil {
 		return false, nil
 	}
 	if _, err := r.refreshSession(ctx, session); err != nil {
@@ -119,35 +98,66 @@ func (r *Resolver) ForceRefresh(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-// refreshSession runs the refresh grant and persists the rotated tokens
-// before returning. An invalid_grant means the session is dead: it is
-// removed so the next attempt gives the sign-in hint instead of looping.
-func (r *Resolver) refreshSession(ctx context.Context, session *Session) (*Session, error) {
-	if session.RefreshToken == "" {
-		_, _ = r.store.Delete(r.cfg.OAuthDomain)
-		return nil, r.sessionExpiredError()
-	}
-
-	tokens, err := r.client.Refresh(ctx, session.TokenEndpoint, session.RefreshToken)
+// storedSession loads the domain's session, mapping a corrupt store to the
+// sign-in hint so every caller reports it the same way.
+func (r *Resolver) storedSession() (*Session, error) {
+	session, err := r.store.Get(r.cfg.OAuthDomain)
 	if err != nil {
-		if errors.Is(err, ErrInvalidGrant) {
+		if errors.Is(err, ErrCorruptStore) {
+			return nil, fmt.Errorf("%w — run `wherobots auth login` to sign in again", err)
+		}
+		return nil, err
+	}
+	return session, nil
+}
+
+// refreshSession runs the refresh grant and persists the rotated tokens
+// before returning. An invalid_grant usually means the session is dead —
+// but it can also mean another CLI process refreshed first and rotated the
+// refresh token out from under us, so the store is re-read once before the
+// session is removed and the user told to sign in again.
+func (r *Resolver) refreshSession(ctx context.Context, session *Session) (*Session, error) {
+	for attempt := 0; ; attempt++ {
+		if session.RefreshToken == "" {
 			_, _ = r.store.Delete(r.cfg.OAuthDomain)
 			return nil, r.sessionExpiredError()
 		}
-		// Transient (network/5xx): keep the session so a retry can succeed.
-		return nil, err
-	}
 
-	updated := *session
-	updated.AccessToken = tokens.AccessToken
-	updated.ExpiresAt = tokens.ExpiresAt
-	if tokens.RefreshToken != "" {
-		updated.RefreshToken = tokens.RefreshToken
+		tokens, err := r.client.Refresh(ctx, session.TokenEndpoint, session.ClientID, session.RefreshToken)
+		if err == nil {
+			updated := *session
+			updated.AccessToken = tokens.AccessToken
+			updated.ExpiresAt = tokens.ExpiresAt
+			if tokens.RefreshToken != "" {
+				updated.RefreshToken = tokens.RefreshToken
+			}
+			if err := r.store.Put(r.cfg.OAuthDomain, updated); err != nil {
+				return nil, err
+			}
+			return &updated, nil
+		}
+		if !errors.Is(err, ErrInvalidGrant) {
+			// Transient (network/5xx): keep the session so a retry can succeed.
+			return nil, err
+		}
+
+		// invalid_grant on a token another process already rotated: adopt the
+		// store's newer session instead of deleting it (which would sign both
+		// processes out).
+		if attempt == 0 {
+			if latest, readErr := r.store.Get(r.cfg.OAuthDomain); readErr == nil && latest != nil &&
+				latest.RefreshToken != "" && latest.RefreshToken != session.RefreshToken {
+				if r.now().Before(latest.ExpiresAt.Add(-refreshSkew)) {
+					return latest, nil
+				}
+				session = latest
+				continue
+			}
+		}
+
+		_, _ = r.store.Delete(r.cfg.OAuthDomain)
+		return nil, r.sessionExpiredError()
 	}
-	if err := r.store.Put(r.cfg.OAuthDomain, updated); err != nil {
-		return nil, err
-	}
-	return &updated, nil
 }
 
 func (r *Resolver) sessionExpiredError() error {

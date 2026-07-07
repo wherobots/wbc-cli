@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 )
@@ -236,6 +237,49 @@ func TestPollForTokenHonorsContextCancellation(t *testing.T) {
 	}
 }
 
+// transientResponse simulates a server hiccup: a 5xx with no OAuth error
+// code, which tokenGrant reports as a plain error.
+func transientResponse() mockResponse {
+	return mockResponse{http.StatusInternalServerError, map[string]any{}}
+}
+
+func TestPollForTokenToleratesTransientFailures(t *testing.T) {
+	t.Parallel()
+	// Two hiccups, a pending (which resets the failure counter), two more
+	// hiccups, then success — the whole sequence must survive.
+	m := newMockAuthKit(t, []mockResponse{
+		transientResponse(), transientResponse(),
+		pendingResponse(),
+		transientResponse(), transientResponse(),
+		successResponse(),
+	})
+	client := newTestClient(m, nil)
+
+	tokens, err := client.PollForToken(context.Background(), &DeviceAuthorization{DeviceCode: "d", Interval: 5, ExpiresIn: 299})
+	if err != nil {
+		t.Fatalf("PollForToken() error = %v", err)
+	}
+	if tokens.AccessToken != "access-1" {
+		t.Errorf("unexpected tokens: %+v", tokens)
+	}
+}
+
+func TestPollForTokenGivesUpAfterConsecutiveFailures(t *testing.T) {
+	t.Parallel()
+	m := newMockAuthKit(t, []mockResponse{
+		transientResponse(), transientResponse(), transientResponse(),
+	})
+	client := newTestClient(m, nil)
+
+	_, err := client.PollForToken(context.Background(), &DeviceAuthorization{DeviceCode: "d", Interval: 5, ExpiresIn: 299})
+	if err == nil || !strings.Contains(err.Error(), "poll for sign-in") {
+		t.Fatalf("err = %v, want poll failure after consecutive errors", err)
+	}
+	if len(m.tokenForms) != 3 {
+		t.Errorf("token calls = %d, want 3", len(m.tokenForms))
+	}
+}
+
 func TestRefreshRotatesToken(t *testing.T) {
 	t.Parallel()
 	m := newMockAuthKit(t, []mockResponse{
@@ -247,7 +291,8 @@ func TestRefreshRotatesToken(t *testing.T) {
 	})
 	client := newTestClient(m, nil)
 
-	tokens, err := client.Refresh(context.Background(), m.srv.URL+"/oauth2/token", "refresh-1")
+	// The session's stored client id wins over the client's baked-in default.
+	tokens, err := client.Refresh(context.Background(), m.srv.URL+"/oauth2/token", "client_stored_456", "refresh-1")
 	if err != nil {
 		t.Fatalf("Refresh() error = %v", err)
 	}
@@ -262,8 +307,8 @@ func TestRefreshRotatesToken(t *testing.T) {
 	if got := form.Get("refresh_token"); got != "refresh-1" {
 		t.Errorf("refresh_token = %q", got)
 	}
-	if got := form.Get("client_id"); got != "client_test_123" {
-		t.Errorf("client_id = %q", got)
+	if got := form.Get("client_id"); got != "client_stored_456" {
+		t.Errorf("client_id = %q, want the session's stored client id", got)
 	}
 }
 
@@ -274,7 +319,7 @@ func TestRefreshInvalidGrant(t *testing.T) {
 	})
 	client := newTestClient(m, nil)
 
-	_, err := client.Refresh(context.Background(), m.srv.URL+"/oauth2/token", "refresh-1")
+	_, err := client.Refresh(context.Background(), m.srv.URL+"/oauth2/token", "", "refresh-1")
 	if !errors.Is(err, ErrInvalidGrant) {
 		t.Fatalf("err = %v, want ErrInvalidGrant", err)
 	}
@@ -285,12 +330,16 @@ func TestRefreshFallsBackToConventionalTokenEndpoint(t *testing.T) {
 	m := newMockAuthKit(t, []mockResponse{successResponse()})
 	client := newTestClient(m, nil)
 
-	// Empty endpoint (older stored session): {domain}/oauth2/token is used.
-	if _, err := client.Refresh(context.Background(), "", "refresh-1"); err != nil {
+	// Empty endpoint and client id (older stored session): the domain's
+	// conventional token path and the client's default id are used.
+	if _, err := client.Refresh(context.Background(), "", "", "refresh-1"); err != nil {
 		t.Fatalf("Refresh() error = %v", err)
 	}
 	if len(m.tokenForms) != 1 {
 		t.Fatalf("expected 1 token call, got %d", len(m.tokenForms))
+	}
+	if got := m.tokenForms[0].Get("client_id"); got != "client_test_123" {
+		t.Errorf("client_id = %q, want the client default", got)
 	}
 }
 
