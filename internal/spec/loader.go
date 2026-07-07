@@ -46,8 +46,12 @@ func (l *Loader) Load(ctx context.Context) ([]byte, error) {
 	if l.cfg.OpenAPIURL != "" {
 		specBytes, err := l.download(ctx, l.cfg.OpenAPIURL)
 		if err == nil {
-			if writeErr := writeCache(l.cfg.CachePath, l.cfg.CacheMeta, specBytes, l.cfg.OpenAPIURL, now); writeErr != nil {
-				return nil, writeErr
+			// An empty CachePath means no user cache dir resolved (e.g. HOME
+			// unset); run uncached rather than failing.
+			if l.cfg.CachePath != "" {
+				if writeErr := writeCache(l.cfg.CachePath, l.cfg.CacheMeta, specBytes, l.cfg.OpenAPIURL, now); writeErr != nil {
+					return nil, writeErr
+				}
 			}
 			return specBytes, nil
 		}

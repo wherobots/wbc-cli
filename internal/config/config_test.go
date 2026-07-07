@@ -2,6 +2,7 @@ package config
 
 import (
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -165,5 +166,52 @@ func TestLoadReadsUploadPathConfig(t *testing.T) {
 	}
 	if cfg.UploadPath != "s3://override-bucket/custom/root" {
 		t.Fatalf("UploadPath = %q", cfg.UploadPath)
+	}
+}
+
+func TestLoadToleratesUnresolvableUserDirs(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("user dirs resolve from the registry/env differently on windows")
+	}
+	t.Setenv("HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_CACHE_HOME", "")
+	t.Setenv("WHEROBOTS_API_KEY", "key-1")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v, want API-key-only usage to survive unresolvable user dirs", err)
+	}
+	if cfg.CredentialsPath != "" {
+		t.Errorf("CredentialsPath = %q, want empty", cfg.CredentialsPath)
+	}
+	if cfg.CachePath != "" || cfg.CacheMeta != "" {
+		t.Errorf("cache paths = %q/%q, want empty", cfg.CachePath, cfg.CacheMeta)
+	}
+}
+
+func TestOAuthDomainLikelyMismatched(t *testing.T) {
+	cases := []struct {
+		name        string
+		apiURL      string
+		oauthDomain string
+		want        bool
+	}{
+		{"custom API with default domain", "https://api.staging.wherobots.com", "", true},
+		{"custom API with custom domain", "https://api.staging.wherobots.com", "https://login.staging.example", false},
+		{"default API with default domain", "", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("WHEROBOTS_API_URL", tc.apiURL)
+			t.Setenv("WHEROBOTS_OAUTH_DOMAIN", tc.oauthDomain)
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if got := cfg.OAuthDomainLikelyMismatched(); got != tc.want {
+				t.Errorf("OAuthDomainLikelyMismatched() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

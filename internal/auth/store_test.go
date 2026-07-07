@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -185,5 +186,18 @@ func TestStoreWriteLeavesNoTempFiles(t *testing.T) {
 			names = append(names, e.Name())
 		}
 		t.Fatalf("dir entries = %v, want only credentials.json", names)
+	}
+}
+
+func TestStoreEmptyPathReportsConfigDirProblem(t *testing.T) {
+	t.Parallel()
+	// config.Load leaves Path empty when the user config dir is unresolvable;
+	// the store must surface an actionable error instead of touching "".
+	store := &Store{}
+	if _, err := store.Get("https://login.example"); err == nil || !strings.Contains(err.Error(), "config directory") {
+		t.Fatalf("Get() err = %v, want config-dir guidance", err)
+	}
+	if err := store.Put("https://login.example", testSession("access-1")); err == nil || !strings.Contains(err.Error(), "config directory") {
+		t.Fatalf("Put() err = %v, want config-dir guidance", err)
 	}
 }

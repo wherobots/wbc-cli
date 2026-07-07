@@ -13,6 +13,11 @@ import (
 // auto-deleted; `wherobots auth login` overwrites it.
 var ErrCorruptStore = errors.New("credentials file is corrupt")
 
+// errNoConfigDir surfaces lazily: config.Load tolerates an unresolvable user
+// config dir (e.g. HOME unset in CI) so API-key-only usage keeps working;
+// the error only matters once the credentials file is actually needed.
+var errNoConfigDir = errors.New("cannot locate the credentials file: the user config directory is not resolvable (set HOME or XDG_CONFIG_HOME)")
+
 // Session is one stored OAuth session, keyed by AuthKit domain so prod and
 // staging sign-ins coexist in the same file.
 type Session struct {
@@ -100,6 +105,9 @@ func (s *Store) DeleteAll() (int, error) {
 
 // read loads the store; a missing file yields an empty store.
 func (s *Store) read() (*storeFile, error) {
+	if s.Path == "" {
+		return nil, errNoConfigDir
+	}
 	data, err := os.ReadFile(s.Path)
 	if errors.Is(err, os.ErrNotExist) {
 		return &storeFile{Version: 1, Sessions: map[string]Session{}}, nil
@@ -120,6 +128,9 @@ func (s *Store) read() (*storeFile, error) {
 
 // write persists the store atomically with owner-only permissions.
 func (s *Store) write(file *storeFile) error {
+	if s.Path == "" {
+		return errNoConfigDir
+	}
 	dir := filepath.Dir(s.Path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create credentials dir: %w", err)

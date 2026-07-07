@@ -27,6 +27,11 @@ func BuildBareRootCommand(cfg config.Config) *cobra.Command {
 // IsSpecFreeInvocation reports whether args resolve to a command registered
 // on the bare root (auth, upgrade) rather than the spec-generated tree.
 func IsSpecFreeInvocation(root *cobra.Command, args []string) bool {
+	// Cobra injects the built-in `help` command at Execute time, so Find
+	// can't resolve `wherobots help auth`; route on the help topic instead.
+	if len(args) > 0 && args[0] == "help" {
+		args = args[1:]
+	}
 	cmd, _, err := root.Find(args)
 	if err != nil || cmd == nil || cmd == root {
 		return false
