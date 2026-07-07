@@ -167,6 +167,12 @@ func (c *Client) PollForToken(ctx context.Context, da *DeviceAuthorization) (*To
 		"client_id":   {c.ClientID},
 	}
 
+	// A transient network hiccup mid-poll shouldn't abort the sign-in and
+	// force the user to start over with a new code; tolerate a few
+	// consecutive failures before giving up.
+	const maxConsecutivePollFailures = 3
+	failures := 0
+
 	for {
 		if err := c.sleepCtx(ctx, time.Duration(interval)*time.Second); err != nil {
 			return nil, err
@@ -174,23 +180,26 @@ func (c *Client) PollForToken(ctx context.Context, da *DeviceAuthorization) (*To
 
 		tokens, oauthErr, err := c.tokenGrant(ctx, endpoints.Token, form)
 		if err != nil {
-			return nil, fmt.Errorf("poll for sign-in: %w", err)
-		}
-		if oauthErr == nil {
+			failures++
+			if ctx.Err() != nil || failures >= maxConsecutivePollFailures {
+				return nil, fmt.Errorf("poll for sign-in: %w", err)
+			}
+		} else if oauthErr == nil {
 			return tokens, nil
-		}
-
-		switch oauthErr.Error {
-		case "authorization_pending":
-			// keep polling
-		case "slow_down":
-			interval += 5
-		case "access_denied":
-			return nil, ErrAccessDenied
-		case "expired_token":
-			return nil, ErrExpiredToken
-		default:
-			return nil, oauthErrorf("poll for sign-in", oauthErr)
+		} else {
+			failures = 0
+			switch oauthErr.Error {
+			case "authorization_pending":
+				// keep polling
+			case "slow_down":
+				interval += 5
+			case "access_denied":
+				return nil, ErrAccessDenied
+			case "expired_token":
+				return nil, ErrExpiredToken
+			default:
+				return nil, oauthErrorf("poll for sign-in", oauthErr)
+			}
 		}
 
 		// The server's expired_token response is the primary expiry signal;
@@ -204,17 +213,22 @@ func (c *Client) PollForToken(ctx context.Context, da *DeviceAuthorization) (*To
 }
 
 // Refresh redeems a refresh token. AuthKit rotates refresh tokens: callers
-// must persist the returned RefreshToken. tokenEndpoint may be empty (older
-// stored sessions); the conventional AuthKit path is used then.
-func (c *Client) Refresh(ctx context.Context, tokenEndpoint, refreshToken string) (*TokenSet, error) {
+// must persist the returned RefreshToken. clientID is the client the token
+// was issued to (from the stored session, so a change to the baked-in
+// default can't orphan old sessions); tokenEndpoint and clientID may be
+// empty (older stored sessions) and fall back to the client's defaults.
+func (c *Client) Refresh(ctx context.Context, tokenEndpoint, clientID, refreshToken string) (*TokenSet, error) {
 	if tokenEndpoint == "" {
 		tokenEndpoint = c.Domain + "/oauth2/token"
+	}
+	if clientID == "" {
+		clientID = c.ClientID
 	}
 
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {refreshToken},
-		"client_id":     {c.ClientID},
+		"client_id":     {clientID},
 	}
 	tokens, oauthErr, err := c.tokenGrant(ctx, tokenEndpoint, form)
 	if err != nil {

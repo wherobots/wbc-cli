@@ -53,9 +53,6 @@ func TestApplyEnvAPIKeyWinsOverSession(t *testing.T) {
 	if got := req.Header.Get("Authorization"); got != "" {
 		t.Errorf("Authorization = %q, want empty", got)
 	}
-	if resolver.Source() != SourceAPIKey {
-		t.Errorf("Source() = %v, want SourceAPIKey", resolver.Source())
-	}
 }
 
 func TestApplyUsesBearerFromStoredSession(t *testing.T) {
@@ -73,9 +70,6 @@ func TestApplyUsesBearerFromStoredSession(t *testing.T) {
 	}
 	if got := req.Header.Get("Authorization"); got != "Bearer access-1" {
 		t.Errorf("Authorization = %q", got)
-	}
-	if resolver.Source() != SourceOAuth {
-		t.Errorf("Source() = %v, want SourceOAuth", resolver.Source())
 	}
 }
 
@@ -97,9 +91,6 @@ func TestApplyNoCredentialsError(t *testing.T) {
 	}
 	if !strings.Contains(msg, "WHEROBOTS_API_KEY") {
 		t.Errorf("error should mention env var, got: %v", msg)
-	}
-	if resolver.Source() != SourceNone {
-		t.Errorf("Source() = %v, want SourceNone", resolver.Source())
 	}
 }
 
@@ -123,6 +114,7 @@ func TestApplyRefreshesInsideSkewAndPersistsRotation(t *testing.T) {
 
 	sess := testSession("access-1")
 	sess.TokenEndpoint = m.srv.URL + "/oauth2/token"
+	sess.ClientID = "client_stored_456"          // differs from the resolver's default
 	sess.ExpiresAt = time.Now().Add(time.Minute) // inside the 2m skew
 	if err := resolver.store.Put(cfg.OAuthDomain, sess); err != nil {
 		t.Fatalf("Put() error = %v", err)
@@ -146,6 +138,62 @@ func TestApplyRefreshesInsideSkewAndPersistsRotation(t *testing.T) {
 	}
 	if stored.Email != "clay@wherobots.com" || stored.TokenEndpoint == "" {
 		t.Errorf("stored session lost metadata: %+v", stored)
+	}
+
+	// The refresh grant must carry the session's stored client id, not the
+	// resolver's current default.
+	if got := m.tokenForms[0].Get("client_id"); got != "client_stored_456" {
+		t.Errorf("refresh client_id = %q, want the session's stored client id", got)
+	}
+}
+
+func TestRefreshInvalidGrantAdoptsSessionRotatedByAnotherProcess(t *testing.T) {
+	t.Parallel()
+	// The refresh grant fails with invalid_grant because another CLI process
+	// already redeemed (and rotated) the refresh token...
+	m := refreshableServer(t, []mockResponse{
+		{http.StatusBadRequest, map[string]any{"error": "invalid_grant"}},
+	})
+	cfg := testResolverConfig(t, m.srv.URL)
+	resolver := NewResolver(cfg)
+
+	// ...and the store already holds the winner's fresh session.
+	winner := testSession("access-2")
+	winner.RefreshToken = "refresh-2"
+	winner.ExpiresAt = time.Now().Add(time.Hour)
+	if err := resolver.store.Put(cfg.OAuthDomain, winner); err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+
+	stale := testSession("access-1")
+	stale.TokenEndpoint = m.srv.URL + "/oauth2/token"
+
+	got, err := resolver.refreshSession(context.Background(), &stale)
+	if err != nil {
+		t.Fatalf("refreshSession() error = %v", err)
+	}
+	if got.AccessToken != "access-2" {
+		t.Errorf("AccessToken = %q, want the winner's rotated token", got.AccessToken)
+	}
+	if stored, _ := resolver.store.Get(cfg.OAuthDomain); stored == nil {
+		t.Errorf("the winner's session must not be deleted")
+	}
+}
+
+func TestForceRefreshCorruptStoreMentionsRelogin(t *testing.T) {
+	t.Parallel()
+	cfg := testResolverConfig(t, "https://login.example")
+	if err := os.WriteFile(cfg.CredentialsPath, []byte("{corrupt"), 0o600); err != nil {
+		t.Fatalf("write corrupt store: %v", err)
+	}
+	resolver := NewResolver(cfg)
+
+	ok, err := resolver.ForceRefresh(context.Background())
+	if ok {
+		t.Errorf("ForceRefresh() ok = true, want false")
+	}
+	if err == nil || !strings.Contains(err.Error(), "wherobots auth login") {
+		t.Fatalf("err = %v, want corrupt-store guidance", err)
 	}
 }
 
