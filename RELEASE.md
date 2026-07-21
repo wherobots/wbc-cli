@@ -41,7 +41,7 @@ Semver, bumped from the previous stable tag:
 ### Previewing release notes
 
 ```bash
-gh api repos/wherobots/wbc-cli/releases/generate-notes \
+gh api repos/wherobots/wherobots-cli/releases/generate-notes \
   -f tag_name=vX.Y.Z -f previous_tag_name=<previous-tag>
 ```
 

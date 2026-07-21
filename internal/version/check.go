@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	repo           = "wherobots/wbc-cli"
+	repo           = "wherobots/wherobots-cli"
 	checkTimeout   = 3 * time.Second
 	collectTimeout = 5 * time.Second
 )

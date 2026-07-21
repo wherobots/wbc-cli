@@ -12,7 +12,7 @@ A command-line interface for the [Wherobots](https://wherobots.com) Cloud API. S
 ### Quick install (curl | bash)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wherobots/wbc-cli/main/scripts/install-release.sh | bash
+curl -fsSL https://raw.githubusercontent.com/wherobots/wherobots-cli/main/scripts/install-release.sh | bash
 ```
 
 This downloads the latest release binary for your OS/arch, verifies its SHA-256 checksum, and installs it to `~/.local/bin/wherobots`.
@@ -20,7 +20,7 @@ This downloads the latest release binary for your OS/arch, verifies its SHA-256 
 To pass options (e.g. a custom install directory or release tag), use `bash -s --`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/wherobots/wbc-cli/main/scripts/install-release.sh \
+curl -fsSL https://raw.githubusercontent.com/wherobots/wherobots-cli/main/scripts/install-release.sh \
   | bash -s -- --install-dir /usr/local/bin --tag latest-prerelease
 ```
 
@@ -29,8 +29,8 @@ Available flags: `--install-dir`, `--tag`, `--repo`, `--binary-name`, `--skip-ch
 ### Build from source
 
 ```bash
-git clone https://github.com/wherobots/wbc-cli.git
-cd wbc-cli
+git clone https://github.com/wherobots/wherobots-cli.git
+cd wherobots-cli
 make build        # produces bin/wherobots
 ```
 

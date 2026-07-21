@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="${WHEROBOTS_CLI_REPO:-wherobots/wbc-cli}"
+REPO="${WHEROBOTS_CLI_REPO:-wherobots/wherobots-cli}"
 TAG="${WHEROBOTS_CLI_TAG:-latest}"
 BINARY_NAME="${WHEROBOTS_CLI_BINARY:-wherobots}"
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/.local/bin}"
@@ -18,7 +18,7 @@ Usage:
   ./scripts/install-release.sh [options]
 
 Options:
-  --repo <owner/name>      GitHub repository (default: wherobots/wbc-cli)
+  --repo <owner/name>      GitHub repository (default: wherobots/wherobots-cli)
   --tag <tag>              Release tag (default: latest)
   --install-dir <path>     Install directory (default: ~/.local/bin)
   --binary-name <name>     Binary name/asset prefix (default: wherobots)
