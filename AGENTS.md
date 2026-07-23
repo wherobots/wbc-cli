@@ -1,6 +1,6 @@
-# CLAUDE.md
+# wherobots-cli
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for AI coding agents (Claude Code, Copilot, Codex) working in this repository.
 
 ## What This Is
 
